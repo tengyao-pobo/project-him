@@ -214,6 +214,10 @@ chase:
     bow: true
     arrow-damage: 4.0
     bow-cooldown-ticks: 60
+    # 他的箭有多少機率是藥水箭，以及可能的效果（POISON 中毒、SLOWNESS 緩速、WEAKNESS 虛弱、HARMING 傷害、
+    # WITHER 凋零、BLINDNESS 失明、NAUSEA 噁心、HUNGER 飢餓）。chase.lethal: false 時不會使用傷害與凋零。
+    tipped-arrow-chance: 0.25
+    tipped-effects: [POISON, SLOWNESS, WEAKNESS, HARMING]
     # 喝擲藥水：緩速（對逃跑的人）、虛弱（對反擊的人）、黑暗（在暗處）。
     potions: true
     potion-effects: [SLOWNESS, WEAKNESS, DARKNESS]

@@ -167,4 +167,15 @@ class HuntGearTest {
         assertEquals(Material.NETHERITE_HOE, HuntGear.tool(HuntGear.ToolKind.HOE, 4));
         assertEquals(Material.SHEARS, HuntGear.tool(HuntGear.ToolKind.SHEARS, 4));
     }
+
+    @Test
+    void anExactTierIsNeverLowered() {
+        SplittableRandom r = new SplittableRandom(8);
+        for (int t = 0; t <= 4; t++) {
+            for (int i = 0; i < 100; i++) {
+                assertEquals(t, HuntGear.ofTier(t, new ChaseStats(), false, r, true, HuntGear.Arsenal.ALL).tier());
+            }
+        }
+        assertEquals(4, HuntGear.ofTier(9, new ChaseStats(), false, r, true, HuntGear.Arsenal.ALL).tier());
+    }
 }

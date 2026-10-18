@@ -65,6 +65,8 @@ public final class Him {
     private boolean paused;
     /** Players whose most recent death was caused by HIM (consumed by the hunt that ends). */
     private final java.util.Set<java.util.UUID> killedByHim = new java.util.HashSet<>();
+    /** Gear tier an administrator asked for in a manual hunt, consumed when that hunt starts. */
+    private final java.util.Map<java.util.UUID, Integer> manualGearTier = new java.util.HashMap<>();
 
     public Him(Plugin plugin, HimLog log, HimConfig config) throws IOException {
         this.plugin = plugin;
@@ -234,6 +236,19 @@ public final class Him {
 
     public boolean paused() {
         return paused;
+    }
+
+    public void setManualGearTier(java.util.UUID player, Integer tier) {
+        if (tier == null) {
+            manualGearTier.remove(player);
+        } else {
+            manualGearTier.put(player, tier);
+        }
+    }
+
+    /** The gear tier asked for by /him chase or /him trigger hunt, if any (only once). */
+    public Integer takeManualGearTier(java.util.UUID player) {
+        return manualGearTier.remove(player);
     }
 
     public Plugin plugin() {

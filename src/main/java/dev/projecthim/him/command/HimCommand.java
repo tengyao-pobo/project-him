@@ -240,7 +240,7 @@ public final class HimCommand implements BasicCommand {
 
     private static void trigger(CommandSender s, Him him, String[] a) {
         if (a.length < 2) {
-            error(s, "用法：/him trigger <事件> <玩家> [private|group|shared] [subvert]");
+            error(s, "用法：/him trigger <事件> <玩家> [private|group|shared] [subvert] [tier=0-4]");
             return;
         }
         if (him.events().get(a[0].toLowerCase(Locale.ROOT)).isEmpty()) {
@@ -253,29 +253,81 @@ public final class HimCommand implements BasicCommand {
         }
         EncounterMode mode = EncounterMode.PRIVATE;
         boolean subvert = false;
+        Integer tier = null;
         for (int i = 2; i < a.length; i++) {
-            switch (a[i].toLowerCase(Locale.ROOT)) {
+            String opt = a[i].toLowerCase(Locale.ROOT);
+            if (opt.startsWith("tier=")) {
+                tier = tier(s, opt.substring(5));
+                if (tier == null) {
+                    return;
+                }
+                continue;
+            }
+            switch (opt) {
                 case "private" -> mode = EncounterMode.PRIVATE;
                 case "group" -> mode = EncounterMode.GROUP;
                 case "shared" -> mode = EncounterMode.SHARED;
-                case "subvert" -> subvert = true;
+                case "subvert", "now" -> subvert = true;
                 default -> {
                     error(s, "未知的選項「" + a[i] + "」。");
                     return;
                 }
             }
         }
-        launch(s, him, target, a[0].toLowerCase(Locale.ROOT), mode, subvert);
+        launchWithTier(s, him, target, a[0].toLowerCase(Locale.ROOT), mode, subvert, tier);
+    }
+
+    /** Gear tier 0 (empty-handed) to 4 (netherite). */
+    private static Integer tier(CommandSender s, String raw) {
+        try {
+            int t = Integer.parseInt(raw.trim());
+            if (t >= 0 && t <= 4) {
+                return t;
+            }
+        } catch (NumberFormatException ignored) {
+            // reported below
+        }
+        error(s, "裝備等級必須是 0-4（0 赤手空拳、1 石／鐵、2 鐵、3 鑽石、4 獄髓），不是「" + raw + "」。");
+        return null;
     }
 
     private static void chase(CommandSender s, Him him, String[] a) {
         if (a.length < 1) {
-            error(s, "用法：/him chase <玩家> [now]");
+            error(s, "用法：/him chase <玩家> [now] [裝備等級 0-4]");
             return;
         }
         Player target = online(s, a[0]);
-        if (target != null) {
-            launch(s, him, target, "hunt", EncounterMode.PRIVATE, a.length > 1 && a[1].equalsIgnoreCase("now"));
+        if (target == null) {
+            return;
+        }
+        boolean now = false;
+        Integer tier = null;
+        for (int i = 1; i < a.length; i++) {
+            String opt = a[i].toLowerCase(Locale.ROOT);
+            if (opt.equals("now")) {
+                now = true;
+            } else {
+                tier = tier(s, opt.startsWith("tier=") ? opt.substring(5) : opt);
+                if (tier == null) {
+                    return;
+                }
+            }
+        }
+        launchWithTier(s, him, target, "hunt", EncounterMode.PRIVATE, now, tier);
+    }
+
+    /** Launches, passing an explicit gear tier to a hunt; the request never outlives this launch. */
+    private static void launchWithTier(CommandSender s, Him him, Player target, String id, EncounterMode mode,
+                                       boolean subvert, Integer tier) {
+        if (tier != null && !id.equals("hunt")) {
+            error(s, "裝備等級只適用於 hunt（追殺）。");
+            return;
+        }
+        him.setManualGearTier(target.getUniqueId(), tier);
+        try {
+            launch(s, him, target, id, mode, subvert);
+        } finally {
+            him.setManualGearTier(target.getUniqueId(), null);
         }
     }
 
@@ -505,8 +557,9 @@ public final class HimCommand implements BasicCommand {
         List<String> options = switch (sub) {
             case "trigger" -> args.length == 2 && him != null
                     ? him.events().all().stream().map(HorrorEvent::id).toList()
-                    : args.length == 3 ? players() : List.of("private", "group", "shared", "subvert");
-            case "chase" -> args.length == 2 ? players() : List.of("now");
+                    : args.length == 3 ? players()
+                    : List.of("private", "group", "shared", "subvert", "tier=0", "tier=1", "tier=2", "tier=3", "tier=4");
+            case "chase" -> args.length == 2 ? players() : List.of("now", "0", "1", "2", "3", "4");
             case "summon" -> args.length == 2 ? players() : List.of("shared");
             case "stop", "memory", "debug" -> args.length == 2
                     ? Stream.concat(players().stream(), sub.equals("debug") ? Stream.of("on", "off") : Stream.<String>empty()).toList()

@@ -237,7 +237,13 @@ final class HuntEvent implements HorrorEvent {
             var weapons = chaseCfg.weapons();
             HuntGear.Arsenal arsenal = new HuntGear.Arsenal(weapons.bow(), weapons.potions() && !weapons.potionEffects()
                     .isEmpty(), weapons.spears(), weapons.maces());
-            loadout = switch (gearCfg.mode()) {
+            Integer forcedTier = ctx.trigger() == dev.projecthim.him.director.Trigger.MANUAL
+                    ? ctx.him().takeManualGearTier(p.getUniqueId()) : null;
+            boolean underground = ctx.session().context() != null && ctx.session().context().underground();
+            loadout = forcedTier != null
+                    ? HuntGear.ofTier(forcedTier, memory.chase(), underground, ctx.him().random(),
+                            gearCfg.enchantGlint(), arsenal)
+                    : switch (gearCfg.mode()) {
                 case NONE -> HuntGear.Loadout.NONE;
                 case FIXED -> fixedLoadout(gearCfg.fixed());
                 case ADAPTIVE -> HuntGear.adaptive(memory.chase(),
@@ -1019,6 +1025,7 @@ final class HuntEvent implements HorrorEvent {
             aim.setY(aim.getY() + HuntGear.arrowLift(d, speed));
             if (aim.lengthSquared() > 1.0E-4 && himSeesTarget) {
                 Arrow arrow = m.launchProjectile(Arrow.class, aim.normalize().multiply(speed));
+                tip(arrow);
                 arrow.setPersistent(false);
                 arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
                 arrow.setVisibleByDefault(false);
@@ -1032,6 +1039,36 @@ final class HuntEvent implements HorrorEvent {
             }
             m.clearActiveItem();
             m.getEquipment().setItem(EquipmentSlot.HAND, item(heldWeapon(), loadout.glint()), true);
+        }
+
+        /**
+         * Sometimes the arrow is tipped, like the ones players brew for. Effects that can kill are
+         * left out when hunts are not lethal.
+         */
+        private void tip(Arrow arrow) {
+            var weapons = ctx.him().config().chase().weapons();
+            List<String> effects = new ArrayList<>();
+            for (String e : weapons.tippedEffects()) {
+                if (settings.lethal() || !e.equals("HARMING") && !e.equals("WITHER")) {
+                    effects.add(e);
+                }
+            }
+            if (effects.isEmpty() || ctx.him().random().nextDouble() >= weapons.tippedArrowChance()) {
+                return;
+            }
+            String name = effects.get(ctx.him().random().nextInt(effects.size()));
+            PotionEffect effect = switch (name) {
+                case "POISON" -> new PotionEffect(PotionEffectType.POISON, 100, 0);
+                case "SLOWNESS" -> new PotionEffect(PotionEffectType.SLOWNESS, 80, 0);
+                case "WEAKNESS" -> new PotionEffect(PotionEffectType.WEAKNESS, 100, 0);
+                case "HARMING" -> new PotionEffect(PotionEffectType.INSTANT_DAMAGE, 1, 0);
+                case "WITHER" -> new PotionEffect(PotionEffectType.WITHER, 80, 0);
+                case "BLINDNESS" -> new PotionEffect(PotionEffectType.BLINDNESS, 60, 0);
+                case "NAUSEA" -> new PotionEffect(PotionEffectType.NAUSEA, 120, 0);
+                default -> new PotionEffect(PotionEffectType.HUNGER, 200, 0);
+            };
+            arrow.addCustomEffect(effect, true);
+            ctx.him().log().debug(() -> "hunt: tipped arrow (" + name.toLowerCase(Locale.ROOT) + ")");
         }
 
         /** Slowness for runners, weakness for fighters, darkness in the dark. */

@@ -122,11 +122,13 @@ public record HimConfig(
     /**
      * Weapons besides the one in his hand (adaptive gear decides who meets which).
      *
-     * @param potionEffects  allowed effects: SLOWNESS, WEAKNESS, DARKNESS
+     * @param potionEffects      allowed effects: SLOWNESS, WEAKNESS, DARKNESS
+     * @param tippedArrowChance  chance an arrow of his is tipped with one of {@code tippedEffects}
+     * @param tippedEffects      allowed: POISON, SLOWNESS, WEAKNESS, HARMING, WITHER, BLINDNESS, NAUSEA, HUNGER
      */
     public record Weapons(boolean bow, double arrowDamage, int bowCooldownTicks, boolean potions,
                           List<String> potionEffects, int potionCooldownTicks, int maxPotions, boolean spears,
-                          boolean maces) {
+                          boolean maces, double tippedArrowChance, List<String> tippedEffects) {
     }
 
     /**
@@ -400,7 +402,10 @@ public record HimConfig(
                         r.integer("chase.weapons.potion-cooldown-ticks", 300, 40, 6000),
                         r.integer("chase.weapons.max-potions", 3, 0, 20),
                         r.bool("chase.weapons.spears", true),
-                        r.bool("chase.weapons.maces", true)),
+                        r.bool("chase.weapons.maces", true),
+                        r.number("chase.weapons.tipped-arrow-chance", 0.25, 0, 1),
+                        effectList(r, "chase.weapons.tipped-effects", TIPPED_EFFECTS,
+                                List.of("POISON", "SLOWNESS", "WEAKNESS", "HARMING"))),
                 new Elite(r.integer("chase.elite.min-tier", 3, 1, 5),
                         r.bool("chase.elite.wind-charge-leap", true),
                         r.bool("chase.elite.speed-potion", true),
@@ -511,6 +516,25 @@ public record HimConfig(
                 r.error(path, "「" + t + "」不是可生成的敵對生物");
             } else {
                 out.add(name);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    public static final List<String> TIPPED_EFFECTS = List.of("POISON", "SLOWNESS", "WEAKNESS", "HARMING", "WITHER",
+            "BLINDNESS", "NAUSEA", "HUNGER");
+
+    private static List<String> effectList(ConfigReader r, String path, List<String> allowed, List<String> def) {
+        if (!r.has(path)) {
+            return def;
+        }
+        List<String> out = new ArrayList<>();
+        for (String e : r.stringList(path)) {
+            String name = e.trim().toUpperCase(Locale.ROOT);
+            if (allowed.contains(name)) {
+                out.add(name);
+            } else {
+                r.error(path, "未知的效果「" + e + "」，可用：" + String.join(", ", allowed));
             }
         }
         return List.copyOf(out);

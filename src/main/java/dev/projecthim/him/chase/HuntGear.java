@@ -104,6 +104,16 @@ public final class HuntGear {
         if (tier > 0 && random.nextDouble() < 0.2) {
             tier--;
         }
+        return ofTier(tier, stats, underground, random, glint, arsenal);
+    }
+
+    /**
+     * A loadout of exactly this tier (the weapons still chosen by context and habit), for example
+     * when an administrator asks for one.
+     */
+    public static Loadout ofTier(int tier, ChaseStats stats, boolean underground, RandomGenerator random, boolean glint,
+                                 Arsenal arsenal) {
+        tier = Math.max(0, Math.min(MAX_TIER, tier));
         if (tier == 0) {
             return Loadout.NONE;
         }

@@ -66,7 +66,22 @@ public record HimConfig(
 
     public record Chase(boolean enabled, int maxConcurrent, ChaseSettings settings, String deathMessage, Siege siege,
                         Gear gear, Flight flight, Teleport teleport, Combat combat, Weapons weapons, Elite elite,
-                        Water water) {
+                        Water water, Tactics tactics) {
+    }
+
+    /**
+     * Fighting tricks, each from a gear tier on (0-4; 5 = never).
+     *
+     * @param shieldMinTier     a shield in the off hand, raised against drawn bows and combos
+     * @param critJumpMinTier   jumping critical hits
+     * @param goldenAppleMinTier once per hunt, badly hurt: backs off and eats a golden apple
+     * @param goldenAppleHeal   share of his health it gives back
+     * @param cobwebMinTier     once per hunt: a cobweb at the feet of a fleeing player (a real block, journaled)
+     * @param totemMinTier      once per hunt: a totem of undying when brought down
+     * @param totemRestore      share of his health he gets up with
+     */
+    public record Tactics(int shieldMinTier, int critJumpMinTier, int goldenAppleMinTier, double goldenAppleHeal,
+                          int cobwebMinTier, int totemMinTier, double totemRestore) {
     }
 
     /**
@@ -119,14 +134,19 @@ public record HimConfig(
      * Fighting HIM during a hunt.
      *
      * @param killable               false: the old rule, he is driven off after a number of hits
-     * @param health                 his health (20 = a player's ten hearts)
+     * @param healthByTier           his health for gear tiers 0-4 (20 = a player's ten hearts)
      * @param armorReductionPerPiece damage he takes is reduced this much per armour piece he wears
      * @param fleeBelow              below this fraction of health he may retreat instead of fighting on
      * @param fleeChance             chance per hit, once below {@code fleeBelow}, that he retreats
      * @param headDropChance         chance he drops his head when killed
      */
-    public record Combat(boolean killable, double health, double armorReductionPerPiece, double fleeBelow,
+    public record Combat(boolean killable, double[] healthByTier, double armorReductionPerPiece, double fleeBelow,
                          double fleeChance, double headDropChance) {
+
+        /** Health for a gear tier: the better equipped, the harder to bring down. */
+        public double health(int tier) {
+            return healthByTier[Math.max(0, Math.min(healthByTier.length - 1, tier))];
+        }
     }
 
     /**
@@ -399,7 +419,7 @@ public record HimConfig(
                 new Teleport(r.integer("chase.teleport.follows", 2, 0, 20),
                         r.bool("chase.teleport.block-commands", false)),
                 new Combat(r.bool("chase.combat.killable", true),
-                        r.number("chase.combat.health", 60, 1, 2000),
+                        r.numberArray("chase.combat.health-by-tier", new double[] {40, 60, 90, 130, 200}, 1, 4000),
                         r.number("chase.combat.armor-reduction-per-piece", 0.08, 0, 0.25),
                         r.number("chase.combat.flee-below", 0.3, 0, 1),
                         r.number("chase.combat.flee-chance", 0.35, 0, 1),
@@ -439,7 +459,14 @@ public record HimConfig(
                         r.bool("chase.water.riptide", true),
                         r.bool("chase.water.channeling", true),
                         r.number("chase.water.channeling-damage", 4.0, 0, 40),
-                        r.bool("chase.water.sink-boats", true)));
+                        r.bool("chase.water.sink-boats", true)),
+                new Tactics(r.integer("chase.tactics.shield-min-tier", 2, 0, 5),
+                        r.integer("chase.tactics.crit-jump-min-tier", 3, 0, 5),
+                        r.integer("chase.tactics.golden-apple-min-tier", 3, 0, 5),
+                        r.number("chase.tactics.golden-apple-heal", 0.25, 0, 1),
+                        r.integer("chase.tactics.cobweb-min-tier", 3, 0, 5),
+                        r.integer("chase.tactics.totem-min-tier", 4, 0, 5),
+                        r.number("chase.tactics.totem-restore", 0.3, 0.05, 1)));
         Impersonation impersonation = new Impersonation(
                 r.bool("impersonation.enabled", true),
                 r.bool("impersonation.show-name", true),

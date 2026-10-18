@@ -64,9 +64,9 @@ public final class HuntGear {
     }
 
     /** Which kinds of weapons the server allows. */
-    public record Arsenal(boolean bow, boolean potions, boolean spears, boolean maces) {
+    public record Arsenal(boolean bow, boolean potions, boolean spears, boolean maces, boolean shields) {
 
-        public static final Arsenal ALL = new Arsenal(true, true, true, true);
+        public static final Arsenal ALL = new Arsenal(true, true, true, true, true);
     }
 
     private HuntGear() {
@@ -125,12 +125,15 @@ public final class HuntGear {
         Material melee = melee(tier, underground, fighter, arsenal, random);
         Material ranged = arsenal.bow() && tier >= 2 && random.nextDouble() < (runner ? 0.7 : 0.35) ? Material.BOW : null;
         boolean potions = arsenal.potions() && tier >= 2 && random.nextDouble() < (runner ? 0.5 : 0.3);
+        // A shield in the other hand, from iron on: more often for fighters, who keep hitting him.
+        Material shield = arsenal.shields() && tier >= 2 && random.nextDouble() < (fighter ? 0.6 : 0.4)
+                ? Material.SHIELD : null;
         return switch (tier) {
             case 1 -> new Loadout(melee, null, null, null, null, null, null, false, false, 1);
-            case 2 -> new Loadout(melee, null, null, Material.IRON_CHESTPLATE, null, null, ranged, potions, false, 2);
-            case 3 -> new Loadout(melee, null, Material.IRON_HELMET, Material.IRON_CHESTPLATE, Material.IRON_LEGGINGS,
+            case 2 -> new Loadout(melee, shield, null, Material.IRON_CHESTPLATE, null, null, ranged, potions, false, 2);
+            case 3 -> new Loadout(melee, shield, Material.IRON_HELMET, Material.IRON_CHESTPLATE, Material.IRON_LEGGINGS,
                     Material.IRON_BOOTS, ranged, potions, false, 3);
-            default -> new Loadout(melee, null, Material.NETHERITE_HELMET, Material.NETHERITE_CHESTPLATE,
+            default -> new Loadout(melee, shield, Material.NETHERITE_HELMET, Material.NETHERITE_CHESTPLATE,
                     Material.NETHERITE_LEGGINGS, Material.NETHERITE_BOOTS, ranged, potions, glint, 4);
         };
     }

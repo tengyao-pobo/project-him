@@ -128,7 +128,7 @@ class HuntGearTest {
         for (int i = 0; i < 5; i++) {
             veteran.recordRepelled();
         }
-        HuntGear.Arsenal swordsOnly = new HuntGear.Arsenal(false, false, false, false);
+        HuntGear.Arsenal swordsOnly = new HuntGear.Arsenal(false, false, false, false, false);
         SplittableRandom r = new SplittableRandom(7);
         for (int i = 0; i < 300; i++) {
             HuntGear.Loadout l = HuntGear.adaptive(veteran, false, r, 4, true, swordsOnly);

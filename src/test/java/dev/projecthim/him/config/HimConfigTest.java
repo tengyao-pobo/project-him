@@ -79,7 +79,12 @@ class HimConfigTest {
     @Test
     void combatAndEliteDefaults() throws ConfigException {
         HimConfig c = HimConfig.load(defaults(), EVENTS);
-        assertEquals(60, c.chase().combat().health());
+        assertEquals(40, c.chase().combat().health(0));
+        assertEquals(200, c.chase().combat().health(4));
+        assertEquals(200, c.chase().combat().health(9), "clamped to the last tier");
+        for (int t = 1; t <= 4; t++) {
+            assertTrue(c.chase().combat().health(t) > c.chase().combat().health(t - 1), "tier " + t);
+        }
         assertEquals(3, c.chase().elite().minionCount());
         assertEquals(java.util.List.of("ZOMBIE", "SKELETON"), c.chase().elite().minionTypes());
         assertEquals(java.util.List.of("SLOWNESS", "WEAKNESS", "DARKNESS"), c.chase().weapons().potionEffects());

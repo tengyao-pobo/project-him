@@ -182,6 +182,15 @@ final class HuntEvent implements HorrorEvent {
         private long pearlThrownAt;
         private long nextPearlAt;
         private int pearlsUsed;
+        /** Tactics: shield raised until, shield knocked out until, a crit jump, apple, cobweb, totem. */
+        private long blockingUntil = -1;
+        private long shieldDisabledUntil;
+        private long critHopUntil = -1;
+        private long eatingUntil = -1;
+        private long nextAppleAt;
+        private boolean ateApple;
+        private boolean cobwebUsed;
+        private boolean totemUsed;
 
         Instance(EventContext ctx) {
             super(ctx);
@@ -246,7 +255,7 @@ final class HuntEvent implements HorrorEvent {
             var gearCfg = chaseCfg.gear();
             var weapons = chaseCfg.weapons();
             HuntGear.Arsenal arsenal = new HuntGear.Arsenal(weapons.bow(), weapons.potions() && !weapons.potionEffects()
-                    .isEmpty(), weapons.spears(), weapons.maces());
+                    .isEmpty(), weapons.spears(), weapons.maces(), chaseCfg.tactics().shieldMinTier() <= HuntGear.MAX_TIER);
             Integer forcedTier = ctx.trigger() == dev.projecthim.him.director.Trigger.MANUAL
                     ? ctx.him().takeManualGearTier(p.getUniqueId()) : null;
             boolean underground = ctx.session().context() != null && ctx.session().context().underground();
@@ -260,13 +269,18 @@ final class HuntEvent implements HorrorEvent {
                         ctx.session().context() != null && ctx.session().context().underground(), ctx.him().random(),
                         gearCfg.maxTier(), gearCfg.enchantGlint(), arsenal);
             };
+            if (loadout.offHand() == Material.SHIELD && loadout.tier() < chaseCfg.tactics().shieldMinTier()) {
+                HuntGear.Loadout l = loadout;
+                loadout = new HuntGear.Loadout(l.mainHand(), null, l.helmet(), l.chestplate(), l.leggings(), l.boots(),
+                        l.ranged(), l.potions(), l.glint(), l.tier());
+            }
             dress();
             Material melee = loadout.mainHand();
             double bonus = weaponBonus(melee);
             meleeBonus = bonus;
             armorCounted = gearCfg.armorAffectsRepel() ? Math.min(loadout.armorPieces(), gearCfg.maxRepelBonus()) : 0;
             var combat = chaseCfg.combat();
-            maxHealth = combat.health();
+            maxHealth = combat.health(loadout.tier());
             health = maxHealth;
             // Killable: health decides; armour reduces the damage he takes. Otherwise armour adds hits to repel.
             int hitsToRepel = combat.killable() ? Integer.MAX_VALUE / 2 : settings.hitsToRepel() + armorCounted;
@@ -549,11 +563,19 @@ final class HuntEvent implements HorrorEvent {
             } else if (cmd.speed() > 0 && cmd.destination() != null) {
                 boolean swimming = carrierLoc.getBlock().getType() == org.bukkit.Material.WATER;
                 double boost = tick < speedBoostUntil ? ctx.him().config().chase().elite().speedBoost() : 1.0;
-                double drinking = drinkingUntil >= 0 ? 0.5 : 1.0;
+                double drinking = drinkingUntil >= 0 || eatingUntil >= 0 ? 0.5 : 1.0;
                 double swim = tridentOut ? ctx.him().config().chase().water().swimFactor() : waterFactor;
                 carrier.setSpeed(cmd.speed() * (swimming ? swim : 1.0) * boost * drinking);
                 Location dest = tactics(tick, p, carrierLoc, cmd, new Location(carrierLoc.getWorld(),
                         cmd.destination().x(), cmd.destination().y(), cmd.destination().z()));
+                // Up close he stops at arm's length, face to face, instead of walking into them.
+                Location targetFeet = p.getLocation();
+                Vector gap = carrierLoc.toVector().subtract(targetFeet.toVector()).setY(0);
+                if (dest.getWorld() == targetFeet.getWorld() && dest.distanceSquared(targetFeet) < 1.0
+                        && Math.abs(carrierLoc.getY() - targetFeet.getY()) < 1.5) {
+                    dest = targetFeet.clone().add(gap.lengthSquared() > 1.0E-4 ? gap.normalize().multiply(0.9)
+                            : new Vector(0.9, 0, 0));
+                }
                 carrier.navigate(dest, tick, cmd.mode() == ChaseBrain.Mode.SEARCH ? 20 : 8);
                 carrier.step();
                 if (cmd.breach() && !targetSheltered && siege.tick(tick, carrier, body, p, viewers)) {
@@ -586,6 +608,11 @@ final class HuntEvent implements HorrorEvent {
                 follow.setPitch(MathUtil.pitchTowards(follow.getX(), follow.getY() + 1.62, follow.getZ(), eye.getX(),
                         eye.getY(), eye.getZ()));
             }
+            if (critHopUntil >= 0) {
+                // A jump before the blow, as players do for a critical hit.
+                double t = 1 - (critHopUntil - tick) / 6.0;
+                follow.add(0, HuntGear.leapHeight(t, 0.55), 0);
+            }
             body.moveTo(follow);
             if (cmd.faceTarget()) {
                 body.entity().setBodyYaw(follow.getYaw());
@@ -607,13 +634,36 @@ final class HuntEvent implements HorrorEvent {
             double horizontal = Math.hypot(follow.getX() - p.getX(), follow.getZ() - p.getZ());
             double dy = follow.getY() - p.getY();
             boolean maceSmash = HuntGear.smashBonus(loadout.mainHand(), dy) > 0 && horizontal <= settings.attackRange();
-            if (cmd.attackAllowed() && tick >= nextAttackAt && bodyShown && himSeesTarget && drawingUntil < 0
-                    && leapStart < 0 && riptideStart < 0 && tridentChargeUntil < 0 && pearl == null) {
-                if (horizontal <= settings.attackRange() && (Math.abs(dy) < 2.0 || maceSmash)) {
+            var tactics = ctx.him().config().chase().tactics();
+            if (critHopUntil >= 0 && tick >= critHopUntil) {
+                critHopUntil = -1;
+                if (horizontal <= settings.attackRange() + 0.5 && Math.abs(dy) < 2.0) {
+                    nextHitBonus += settings.attackDamage() * 0.4;
+                    for (Player v : viewers) {
+                        if (v.isOnline() && v.getWorld() == p.getWorld()) {
+                            v.spawnParticle(Particle.CRIT, p.getLocation().add(0, 1, 0), 14, 0.3, 0.4, 0.3, 0.2);
+                        }
+                    }
                     attack(p, follow, cmd.mode(), dy);
                     nextAttackAt = tick + settings.attackCooldownTicks();
                 }
             }
+            if (cmd.attackAllowed() && tick >= nextAttackAt && bodyShown && himSeesTarget && drawingUntil < 0
+                    && leapStart < 0 && riptideStart < 0 && tridentChargeUntil < 0 && pearl == null
+                    && critHopUntil < 0 && eatingUntil < 0 && blockingUntil < tick) {
+                if (horizontal <= settings.attackRange() && (Math.abs(dy) < 2.0 || maceSmash)) {
+                    if (loadout.tier() >= tactics.critJumpMinTier() && !maceSmash && ctx.him().random().nextDouble() < 0.5) {
+                        critHopUntil = tick + 6;
+                        ctx.him().log().trace(() -> "hunt: crit jump");
+                    } else {
+                        attack(p, follow, cmd.mode(), dy);
+                        nextAttackAt = tick + settings.attackCooldownTicks();
+                    }
+                }
+            }
+            defend(tick, p, distance);
+            eat(tick, p, distance);
+            cobweb(tick, p, follow, distance);
             ranged(tick, p, follow, cmd, distance);
             elitePlays(tick, p, follow, cmd, distance);
             waterPlays(tick, p, follow, cmd, distance);
@@ -769,6 +819,122 @@ final class HuntEvent implements HorrorEvent {
         protected void onTargetPearl() {
             if (learns()) {
                 ctx.session().memory().chase().recordPearl();
+            }
+        }
+
+        private boolean inFront(Player attacker) {
+            Vector facing = body.location().getDirection().setY(0);
+            Vector toAttacker = attacker.getLocation().toVector().subtract(body.location().toVector()).setY(0);
+            if (toAttacker.lengthSquared() < 0.25 || facing.lengthSquared() < 1.0E-4) {
+                // Face to face.
+                return true;
+            }
+            return facing.dot(toAttacker) > 0;
+        }
+
+        /**
+         * The shield: up when a bow, crossbow or trident is drawn on him from a distance, or for a moment
+         * after a hit when they keep swinging. Down again to strike back.
+         */
+        private void defend(long tick, Player p, double distance) {
+            if (blockingUntil >= 0 && tick > blockingUntil) {
+                lowerShield();
+            }
+            if (loadout.offHand() != Material.SHIELD || tick < shieldDisabledUntil || blockingUntil >= tick
+                    || eatingUntil >= 0 || drinkingUntil >= 0 || !bodyShown || aftermathSince >= 0) {
+                return;
+            }
+            Material drawn = p.getActiveItem().getType();
+            boolean aimed = (drawn == Material.BOW || drawn == Material.CROSSBOW || drawn == Material.TRIDENT) && distance > 4;
+            boolean combo = tick - lastHitByPlayerAt < 12 && distance < 4 && ctx.him().random().nextDouble() < 0.08;
+            if (aimed || combo) {
+                body.entity().startUsingItem(EquipmentSlot.OFF_HAND);
+                blockingUntil = tick + (aimed ? 30 : 16);
+                ctx.him().log().debug(() -> "hunt: shield up (" + (aimed ? "aimed at" : "combo") + ")");
+            }
+        }
+
+        private void lowerShield() {
+            blockingUntil = -1;
+            if (body.valid()) {
+                body.entity().clearActiveItem();
+            }
+        }
+
+        /** Badly hurt, once per hunt: steps back and eats a golden apple, unless they stop him. */
+        private void eat(long tick, Player p, double distance) {
+            var tactics = ctx.him().config().chase().tactics();
+            if (eatingUntil >= 0) {
+                if (tick >= eatingUntil) {
+                    stopEating(tick, true);
+                }
+                return;
+            }
+            if (ateApple || loadout.tier() < tactics.goldenAppleMinTier() || tick < nextAppleAt || !bodyShown
+                    || aftermathSince >= 0 || health >= maxHealth * 0.5 || distance < 4 || drawingUntil >= 0
+                    || drinkingUntil >= 0 || blockingUntil >= tick || pearl != null || leapStart >= 0) {
+                return;
+            }
+            body.entity().getEquipment().setItem(EquipmentSlot.OFF_HAND, new ItemStack(Material.GOLDEN_APPLE), true);
+            body.entity().startUsingItem(EquipmentSlot.OFF_HAND);
+            eatingUntil = tick + 32;
+            backoffUntil = eatingUntil;
+            ctx.him().log().debug(() -> "hunt: eating a golden apple");
+        }
+
+        private void stopEating(long tick, boolean finished) {
+            eatingUntil = -1;
+            backoffUntil = -1;
+            body.entity().clearActiveItem();
+            body.entity().getEquipment().setItem(EquipmentSlot.OFF_HAND, item(loadout.offHand(), loadout.glint()), true);
+            if (finished) {
+                ateApple = true;
+                health = Math.min(maxHealth, health + maxHealth * ctx.him().config().chase().tactics().goldenAppleHeal());
+                SoundCues.play(viewers, body.location(), Sound.ENTITY_PLAYER_BURP, SoundCategory.HOSTILE, 1.0f, 0.8f);
+                if (bossBar != null) {
+                    bossBar.progress((float) Math.max(0, Math.min(1, health / maxHealth)));
+                }
+                ctx.him().log().debug(() -> String.format(Locale.ROOT, "hunt: ate it, %.1f/%.0f", health, maxHealth));
+            } else {
+                nextAppleAt = tick + 100;
+                ctx.him().log().debug(() -> "hunt: eating interrupted");
+            }
+        }
+
+        /**
+         * Once per hunt, at a fleeing player's feet: a cobweb. A real block, so it goes through the
+         * world change journal (restored later), the protection rules and other plugins first.
+         */
+        private void cobweb(long tick, Player p, Location from, double distance) {
+            if (cobwebUsed || loadout.tier() < ctx.him().config().chase().tactics().cobwebMinTier() || !bodyShown
+                    || !himSeesTarget || distance < 3 || distance > 10 || aftermathSince >= 0) {
+                return;
+            }
+            boolean fleeing = new Vec(targetVelocity.x(), 0, targetVelocity.z()).length() > 0.15
+                    && p.getLocation().toVector().subtract(from.toVector()).dot(
+                            new Vector(targetVelocity.x(), 0, targetVelocity.z())) > 0;
+            if (!fleeing || ctx.him().random().nextDouble() > 0.05) {
+                return;
+            }
+            Block ahead = p.getLocation().add(targetVelocity.x() * 6, 0, targetVelocity.z() * 6).getBlock();
+            // Uneven ground: the block above, where their legs will be.
+            Block at = ahead.getType().isAir() ? ahead : ahead.getRelative(org.bukkit.block.BlockFace.UP);
+            if (!at.getType().isAir() || !ctx.him().protection().realChangesAllowed(at.getWorld())
+                    || !ctx.him().protection().areaIsWild(at.getLocation())) {
+                return;
+            }
+            cobwebUsed = true;
+            var data = Material.COBWEB.createBlockData();
+            var event = new org.bukkit.event.entity.EntityChangeBlockEvent(body.entity(), at, data);
+            Bukkit.getPluginManager().callEvent(event);
+            if (event.isCancelled()) {
+                return;
+            }
+            long revertAt = ctx.him().clock().now() + 60_000L;
+            if (ctx.him().journal().apply(at, data, revertAt, "hunt_cobweb")) {
+                body.entity().swingMainHand();
+                SoundCues.play(viewers, at.getLocation(), Sound.BLOCK_COBWEB_PLACE, SoundCategory.HOSTILE, 1.0f, 1.0f);
+                ctx.him().log().debug(() -> "hunt: cobweb in " + p.getName() + "'s way");
             }
         }
 
@@ -1590,6 +1756,25 @@ final class HuntEvent implements HorrorEvent {
                 // Already over, or still flinching from the last hit (as anyone would be).
                 return;
             }
+            if (blockingUntil >= now && inFront(attacker)) {
+                boolean axe = HuntGear.isAxe(attacker.getInventory().getItemInMainHand().getType())
+                        && attacker.getLocation().distanceSquared(body.location()) < 25;
+                if (axe) {
+                    // An axe takes the shield out of his hands, as it would anyone's.
+                    shieldDisabledUntil = now + 100;
+                    lowerShield();
+                    SoundCues.play(viewers, body.location(), Sound.ITEM_SHIELD_BREAK, SoundCategory.HOSTILE, 1.0f, 0.8f);
+                } else {
+                    SoundCues.play(viewers, body.location(), Sound.ITEM_SHIELD_BLOCK, SoundCategory.HOSTILE, 1.0f, 1.0f);
+                    ctx.him().log().debug(() -> "hunt: blocked " + attacker.getName() + "'s hit with his shield");
+                    lastHurtAt = now;
+                    return;
+                }
+            }
+            if (eatingUntil >= 0) {
+                // Hit while eating: interrupted.
+                stopEating(now, false);
+            }
             lastHurtAt = now;
             lastHitByPlayerAt = now;
             hits++;
@@ -1615,6 +1800,26 @@ final class HuntEvent implements HorrorEvent {
             if (health > 0 && elite && eliteCfg.minions() && !minionsSummoned && loadout.tier() >= eliteCfg.minionMinTier()
                     && health < maxHealth * eliteCfg.minionBelowHealth()) {
                 summonMinions(attacker);
+            }
+            var tacticsCfg = ctx.him().config().chase().tactics();
+            if (health <= 0 && !totemUsed && loadout.tier() >= tacticsCfg.totemMinTier()) {
+                // A totem of undying: he gets up again. Only once.
+                totemUsed = true;
+                health = maxHealth * tacticsCfg.totemRestore();
+                body.entity().getEquipment().setItem(EquipmentSlot.OFF_HAND, new ItemStack(Material.TOTEM_OF_UNDYING), true);
+                body.entity().playEffect(org.bukkit.EntityEffect.PROTECTED_FROM_DEATH);
+                SoundCues.play(viewers, body.location(), Sound.ITEM_TOTEM_USE, SoundCategory.HOSTILE, 1.0f, 1.0f);
+                Bukkit.getScheduler().runTaskLater(ctx.him().plugin(), () -> {
+                    if (body.valid()) {
+                        body.entity().getEquipment().setItem(EquipmentSlot.OFF_HAND, item(loadout.offHand(), loadout.glint()),
+                                true);
+                    }
+                }, 30L);
+                if (bossBar != null) {
+                    bossBar.progress((float) (health / maxHealth));
+                }
+                ctx.him().log().debug(() -> "hunt: totem of undying");
+                return;
             }
             if (health <= 0) {
                 end(ChaseBrain.EndReason.SLAIN);

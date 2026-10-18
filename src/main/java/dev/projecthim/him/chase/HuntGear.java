@@ -1,14 +1,18 @@
 package dev.projecthim.him.chase;
 
 import dev.projecthim.him.memory.ChaseStats;
+import dev.projecthim.him.memory.ChaseStats.EscapeMethod;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.random.RandomGenerator;
 import org.bukkit.Material;
 
 /**
  * What HIM carries into a hunt. In adaptive mode the gear follows the player's record against him:
  * a newcomer meets the classic empty-handed figure; a player who keeps escaping or beating him back
- * meets one who came prepared. The context picks the tool (a pickaxe underground), and sometimes he
- * comes one tier lighter than expected so the gear never becomes fully predictable.
+ * meets one who came prepared. The context picks the tool (a pickaxe underground), the player's
+ * habits pick the weapon (a bow and slowing potions for runners, an axe or a mace for fighters),
+ * and sometimes he comes one tier lighter than expected so the gear never becomes fully predictable.
  *
  * <p>Tier 4 is reserved for players who beat him again and again: netherite, shining with an
  * enchantment glint. The glint is only a look; what the gear does in a fight is capped by the
@@ -18,11 +22,35 @@ public final class HuntGear {
 
     public static final int MAX_TIER = 4;
 
-    /** Item per slot; null means empty. {@code glint} adds the enchantment shine (no real enchantments). */
+    /**
+     * Item per slot; null means empty.
+     *
+     * @param ranged   a bow he may switch to, or null
+     * @param potions  whether he carries splash potions
+     * @param glint    the enchantment shine (no real enchantments)
+     * @param tier     0 (empty-handed) to 4 (netherite); 3 and up fights like a skilled player
+     */
     public record Loadout(Material mainHand, Material offHand, Material helmet, Material chestplate,
-                          Material leggings, Material boots, boolean glint) {
+                          Material leggings, Material boots, Material ranged, boolean potions, boolean glint,
+                          int tier) {
 
-        public static final Loadout NONE = new Loadout(null, null, null, null, null, null, false);
+        public static final Loadout NONE = new Loadout(null, null, null, null, null, null, null, false, false, 0);
+
+        /** A hand-picked loadout, ranked by the best material in it. */
+        public static Loadout fixed(Material mainHand, Material offHand, Material helmet, Material chestplate,
+                                    Material leggings, Material boots, Material ranged, boolean potions,
+                                    boolean glint) {
+            int tier = 0;
+            for (Material m : new Material[] {mainHand, helmet, chestplate, leggings, boots}) {
+                if (m == null) {
+                    continue;
+                }
+                String n = m.name();
+                tier = Math.max(tier, n.startsWith("NETHERITE_") ? 4 : n.startsWith("DIAMOND_") || m == Material.MACE ? 3
+                        : n.startsWith("IRON_") ? 2 : 1);
+            }
+            return new Loadout(mainHand, offHand, helmet, chestplate, leggings, boots, ranged, potions, glint, tier);
+        }
 
         public int armorPieces() {
             int n = 0;
@@ -35,12 +63,18 @@ public final class HuntGear {
         }
     }
 
+    /** Which kinds of weapons the server allows. */
+    public record Arsenal(boolean bow, boolean potions, boolean spears, boolean maces) {
+
+        public static final Arsenal ALL = new Arsenal(true, true, true, true);
+    }
+
     private HuntGear() {
     }
 
     /** 0 (nothing) to 4 (netherite), from how often the player got the better of him. */
     public static int tier(ChaseStats stats) {
-        int threat = stats.repelled() * 2 + stats.escapes();
+        int threat = stats.slain() * 3 + stats.repelled() * 2 + stats.escapes();
         if (threat < 2) {
             return 0;
         }
@@ -57,7 +91,7 @@ public final class HuntGear {
     }
 
     public static Loadout adaptive(ChaseStats stats, boolean underground, RandomGenerator random) {
-        return adaptive(stats, underground, random, MAX_TIER, true);
+        return adaptive(stats, underground, random, MAX_TIER, true, Arsenal.ALL);
     }
 
     /**
@@ -65,23 +99,57 @@ public final class HuntGear {
      * @param glint    whether tier 4 shines with an enchantment glint
      */
     public static Loadout adaptive(ChaseStats stats, boolean underground, RandomGenerator random, int maxTier,
-                                   boolean glint) {
+                                   boolean glint, Arsenal arsenal) {
         int tier = Math.min(tier(stats), Math.max(0, maxTier));
         if (tier > 0 && random.nextDouble() < 0.2) {
             tier--;
         }
+        if (tier == 0) {
+            return Loadout.NONE;
+        }
+        EscapeMethod habit = stats.favouriteEscape();
+        boolean runner = habit == EscapeMethod.OUTRAN || habit == EscapeMethod.FLEW || habit == EscapeMethod.BROKE_SIGHT;
+        boolean fighter = habit == EscapeMethod.FOUGHT || stats.repelled() + stats.slain() * 2 > stats.escapes();
+        Material melee = melee(tier, underground, fighter, arsenal, random);
+        Material ranged = arsenal.bow() && tier >= 2 && random.nextDouble() < (runner ? 0.7 : 0.35) ? Material.BOW : null;
+        boolean potions = arsenal.potions() && tier >= 2 && random.nextDouble() < (runner ? 0.5 : 0.3);
         return switch (tier) {
-            case 0 -> Loadout.NONE;
-            case 1 -> new Loadout(underground ? Material.IRON_PICKAXE
-                    : random.nextBoolean() ? Material.IRON_AXE : Material.STONE_SWORD, null, null, null, null, null,
-                    false);
-            case 2 -> new Loadout(underground && random.nextDouble() < 0.4 ? Material.IRON_PICKAXE : Material.IRON_SWORD,
-                    null, null, Material.IRON_CHESTPLATE, null, null, false);
-            case 3 -> new Loadout(Material.DIAMOND_SWORD, null, Material.IRON_HELMET, Material.IRON_CHESTPLATE,
-                    Material.IRON_LEGGINGS, Material.IRON_BOOTS, false);
-            default -> new Loadout(Material.NETHERITE_SWORD, null, Material.NETHERITE_HELMET,
-                    Material.NETHERITE_CHESTPLATE, Material.NETHERITE_LEGGINGS, Material.NETHERITE_BOOTS, glint);
+            case 1 -> new Loadout(melee, null, null, null, null, null, null, false, false, 1);
+            case 2 -> new Loadout(melee, null, null, Material.IRON_CHESTPLATE, null, null, ranged, potions, false, 2);
+            case 3 -> new Loadout(melee, null, Material.IRON_HELMET, Material.IRON_CHESTPLATE, Material.IRON_LEGGINGS,
+                    Material.IRON_BOOTS, ranged, potions, false, 3);
+            default -> new Loadout(melee, null, Material.NETHERITE_HELMET, Material.NETHERITE_CHESTPLATE,
+                    Material.NETHERITE_LEGGINGS, Material.NETHERITE_BOOTS, ranged, potions, glint, 4);
         };
+    }
+
+    private static Material melee(int tier, boolean underground, boolean fighter, Arsenal arsenal, RandomGenerator r) {
+        if (underground && (tier == 1 || r.nextDouble() < 0.4)) {
+            return tier >= 4 ? Material.NETHERITE_PICKAXE : tier == 3 ? Material.DIAMOND_PICKAXE : Material.IRON_PICKAXE;
+        }
+        String metal = switch (tier) {
+            case 1 -> "STONE";
+            case 2 -> "IRON";
+            case 3 -> "DIAMOND";
+            default -> "NETHERITE";
+        };
+        // Fighters meet what beats a fighter: the axe (breaks shields) and the mace.
+        List<Material> pool = new ArrayList<>();
+        pool.add(Material.valueOf(metal + "_SWORD"));
+        pool.add(Material.valueOf(metal + "_AXE"));
+        if (fighter) {
+            pool.add(Material.valueOf(metal + "_AXE"));
+        }
+        if (arsenal.spears()) {
+            pool.add(Material.valueOf(metal + "_SPEAR"));
+        }
+        if (arsenal.maces() && tier >= 3) {
+            pool.add(Material.MACE);
+            if (fighter) {
+                pool.add(Material.MACE);
+            }
+        }
+        return pool.get(r.nextInt(pool.size()));
     }
 
     /** Extra damage a held item adds to HIM's base attack. */
@@ -92,7 +160,7 @@ public final class HuntGear {
         String n = weapon.name();
         double tier = n.startsWith("NETHERITE_") ? 4 : n.startsWith("DIAMOND_") ? 3 : n.startsWith("IRON_") ? 2
                 : n.startsWith("STONE_") || n.startsWith("COPPER_") ? 1 : 0;
-        if (n.endsWith("_SWORD")) {
+        if (n.endsWith("_SWORD") || n.endsWith("_SPEAR")) {
             return tier * 0.5;
         }
         if (n.endsWith("_AXE")) {
@@ -105,5 +173,53 @@ public final class HuntGear {
             return 2;
         }
         return 0;
+    }
+
+    public static boolean isAxe(Material m) {
+        return m != null && m.name().endsWith("_AXE") && !m.name().endsWith("_PICKAXE");
+    }
+
+    public static boolean isSpear(Material m) {
+        return m != null && m.name().endsWith("_SPEAR");
+    }
+
+    public static boolean isMace(Material m) {
+        return m == Material.MACE;
+    }
+
+    /** Extra reach: a spear keeps players at a distance. */
+    public static double reachBonus(Material m) {
+        return isSpear(m) ? 1.0 : 0;
+    }
+
+    /** Extra damage of a mace blow from above, by how far he came down. */
+    public static double smashBonus(Material m, double heightAbove) {
+        if (!isMace(m) || heightAbove < 1.5) {
+            return 0;
+        }
+        return Math.min(6, 2 + (heightAbove - 1.5) * 1.5);
+    }
+
+    /**
+     * Height of a wind-charge leap at fraction {@code t} (0..1) of its flight: a parabola peaking
+     * at {@code apex} above the straight line between take-off and landing.
+     */
+    public static double leapHeight(double t, double apex) {
+        double c = Math.max(0, Math.min(1, t));
+        return 4 * apex * c * (1 - c);
+    }
+
+    /** Damage he actually takes from a hit, after his armour. */
+    public static double damageTaken(double raw, int armorPieces, double reductionPerPiece) {
+        return Math.max(0, raw) * Math.max(0, 1 - armorPieces * reductionPerPiece);
+    }
+
+    /**
+     * Where to aim an arrow so it lands at a target {@code distance} blocks away: arrows fall about
+     * 0.05 blocks per tick per tick.
+     */
+    public static double arrowLift(double distance, double speed) {
+        double ticks = distance / speed;
+        return 0.5 * 0.05 * ticks * ticks;
     }
 }

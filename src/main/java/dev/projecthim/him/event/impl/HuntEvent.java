@@ -31,7 +31,15 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.ItemLore;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
@@ -39,8 +47,16 @@ import org.bukkit.block.Block;
 import org.bukkit.block.data.Openable;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
+import org.bukkit.entity.AbstractArrow;
+import org.bukkit.entity.Arrow;
+import org.bukkit.entity.Mannequin;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Pose;
+import org.bukkit.entity.ThrownPotion;
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.meta.PotionMeta;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 
@@ -114,6 +130,34 @@ final class HuntEvent implements HorrorEvent {
         private double waterFactor = 0.5;
         private SiegeWorks siege;
         private boolean targetSheltered;
+        /** Fighting him: his health, and the armour pieces that count against damage. */
+        private double health;
+        private double maxHealth;
+        private int armorCounted;
+        private long lastHurtAt = Long.MIN_VALUE / 2;
+        private long lastHitByPlayerAt = Long.MIN_VALUE / 2;
+        private boolean deathShown;
+        /** Bow: drawing until this tick (-1 = not drawing), and when he may draw again. */
+        private long drawingUntil = -1;
+        private long nextShotAt;
+        private long nextPotionAt;
+        private int potionsUsed;
+        /** Well equipped (diamond and up): he fights like a skilled player. */
+        private boolean elite;
+        private int strafeSide = 1;
+        private long strafeFlipAt;
+        private long backoffUntil = -1;
+        private long drinkingUntil = -1;
+        private long speedBoostUntil = -1;
+        private boolean drankSpeed;
+        /** A wind-charge leap in progress (-1 = none). */
+        private long leapStart = -1;
+        private Location leapFrom;
+        private Location leapTo;
+        private long nextLeapAt;
+        private final List<org.bukkit.entity.Mob> minions = new ArrayList<>();
+        private boolean minionsSummoned;
+        private net.kyori.adventure.bossbar.BossBar bossBar;
 
         Instance(EventContext ctx) {
             super(ctx);
@@ -148,6 +192,7 @@ final class HuntEvent implements HorrorEvent {
             viewers = new ArrayList<>(ctx.mode() == EncounterMode.SHARED ? ctx.participants() : List.of(p));
             equip(memory, p);
             showBody();
+            showBossBar();
             siege = new SiegeWorks(ctx.him(), ctx.him().config().chase().siege(), ctx.instanceId());
             // Players who keep escaping through water meet a better swimmer.
             waterFactor = memory.chase().favouriteEscape() == EscapeMethod.WATER ? 0.85 : 0.5;
@@ -168,30 +213,63 @@ final class HuntEvent implements HorrorEvent {
             return true;
         }
 
-        /** Dresses the body for the hunt and lets the gear shape damage and toughness. */
+        /** Dresses the body for the hunt and lets the gear shape damage, reach and toughness. */
         private void equip(PlayerMemory memory, Player p) {
-            var gearCfg = ctx.him().config().chase().gear();
+            var chaseCfg = ctx.him().config().chase();
+            var gearCfg = chaseCfg.gear();
+            var weapons = chaseCfg.weapons();
+            HuntGear.Arsenal arsenal = new HuntGear.Arsenal(weapons.bow(), weapons.potions() && !weapons.potionEffects()
+                    .isEmpty(), weapons.spears(), weapons.maces());
             loadout = switch (gearCfg.mode()) {
                 case NONE -> HuntGear.Loadout.NONE;
                 case FIXED -> fixedLoadout(gearCfg.fixed());
                 case ADAPTIVE -> HuntGear.adaptive(memory.chase(),
                         ctx.session().context() != null && ctx.session().context().underground(), ctx.him().random(),
-                        gearCfg.maxTier(), gearCfg.enchantGlint());
+                        gearCfg.maxTier(), gearCfg.enchantGlint(), arsenal);
             };
             dress();
+            Material melee = loadout.mainHand();
             double bonus = gearCfg.weaponAffectsDamage()
-                    ? Math.min(HuntGear.damageBonus(loadout.mainHand()), gearCfg.maxDamageBonus()) : 0;
-            int armor = gearCfg.armorAffectsRepel() ? Math.min(loadout.armorPieces(), gearCfg.maxRepelBonus()) : 0;
-            if (bonus > 0 || armor > 0) {
-                ChaseSettings s = settings;
-                settings = new ChaseSettings(s.walkSpeed(), s.runSpeed(), s.burstSpeed(), s.burstTicks(),
-                        s.burstCooldownTicks(), s.attackRange(), s.attackDamage() + bonus, s.attackCooldownTicks(),
-                        s.lethal(), s.maxDurationTicks(), s.revealTicks(), s.loseSightTicks(), s.searchTicks(),
-                        s.escapeDistance(), s.hitsToRepel() + armor, s.fakeRetreatChance(), s.maxRepositions(),
-                        s.openDoors());
-            }
+                    ? Math.min(HuntGear.damageBonus(melee), gearCfg.maxDamageBonus()) : 0;
+            armorCounted = gearCfg.armorAffectsRepel() ? Math.min(loadout.armorPieces(), gearCfg.maxRepelBonus()) : 0;
+            var combat = chaseCfg.combat();
+            maxHealth = combat.health();
+            health = maxHealth;
+            // Killable: health decides; armour reduces the damage he takes. Otherwise armour adds hits to repel.
+            int hitsToRepel = combat.killable() ? Integer.MAX_VALUE / 2 : settings.hitsToRepel() + armorCounted;
+            ChaseSettings s = settings;
+            settings = new ChaseSettings(s.walkSpeed(), s.runSpeed(), s.burstSpeed(), s.burstTicks(),
+                    s.burstCooldownTicks(), s.attackRange() + HuntGear.reachBonus(melee), s.attackDamage() + bonus,
+                    HuntGear.isMace(melee) ? (int) (s.attackCooldownTicks() * 1.4) : s.attackCooldownTicks(),
+                    s.lethal(), s.maxDurationTicks(), s.revealTicks(), s.loseSightTicks(), s.searchTicks(),
+                    s.escapeDistance(), hitsToRepel, s.fakeRetreatChance(), s.maxRepositions(), s.openDoors());
+            elite = loadout.tier() >= chaseCfg.elite().minTier();
             HuntGear.Loadout chosen = loadout;
-            ctx.him().log().debug(() -> "hunt gear for " + p.getName() + ": " + chosen);
+            ctx.him().log().debug(() -> "hunt gear for " + p.getName() + ": " + chosen + (elite ? " (elite)" : ""));
+        }
+
+        /** At the highest tiers the hunted see how much he has left. */
+        private void showBossBar() {
+            var cfg = ctx.him().config().chase();
+            int min = cfg.elite().bossBarMinTier();
+            if (min <= 0 || loadout.tier() < min || !cfg.combat().killable()) {
+                return;
+            }
+            bossBar = net.kyori.adventure.bossbar.BossBar.bossBar(Component.text("HIM", NamedTextColor.WHITE), 1f,
+                    net.kyori.adventure.bossbar.BossBar.Color.WHITE, net.kyori.adventure.bossbar.BossBar.Overlay.PROGRESS);
+            for (Player v : viewers) {
+                v.showBossBar(bossBar);
+            }
+        }
+
+        private void hideBossBar() {
+            if (bossBar == null) {
+                return;
+            }
+            for (Player v : Bukkit.getOnlinePlayers()) {
+                v.hideBossBar(bossBar);
+            }
+            bossBar = null;
         }
 
         private void dress() {
@@ -206,9 +284,11 @@ final class HuntEvent implements HorrorEvent {
         }
 
         private HuntGear.Loadout fixedLoadout(java.util.Map<String, String> fixed) {
-            return new HuntGear.Loadout(material(fixed.get("main-hand")), material(fixed.get("off-hand")),
+            var gearCfg = ctx.him().config().chase().gear();
+            return HuntGear.Loadout.fixed(material(fixed.get("main-hand")), material(fixed.get("off-hand")),
                     material(fixed.get("helmet")), material(fixed.get("chestplate")), material(fixed.get("leggings")),
-                    material(fixed.get("boots")), ctx.him().config().chase().gear().fixedGlint());
+                    material(fixed.get("boots")), material(fixed.get("ranged")), gearCfg.fixedPotions(),
+                    gearCfg.fixedGlint());
         }
 
         private static org.bukkit.Material material(String name) {
@@ -403,11 +483,18 @@ final class HuntEvent implements HorrorEvent {
                 reposition(p);
                 carrierLoc = carrier.location();
             }
-            if (cmd.speed() > 0 && cmd.destination() != null) {
+            if (leapStart >= 0) {
+                leapTick(tick, p);
+            } else if (drawingUntil >= 0) {
+                // Drawing the bow: he stands still and aims.
+                carrier.stop();
+            } else if (cmd.speed() > 0 && cmd.destination() != null) {
                 boolean swimming = carrierLoc.getBlock().getType() == org.bukkit.Material.WATER;
-                carrier.setSpeed(cmd.speed() * (swimming ? waterFactor : 1.0));
-                Location dest = new Location(carrierLoc.getWorld(), cmd.destination().x(), cmd.destination().y(),
-                        cmd.destination().z());
+                double boost = tick < speedBoostUntil ? ctx.him().config().chase().elite().speedBoost() : 1.0;
+                double drinking = drinkingUntil >= 0 ? 0.5 : 1.0;
+                carrier.setSpeed(cmd.speed() * (swimming ? waterFactor : 1.0) * boost * drinking);
+                Location dest = tactics(tick, p, carrierLoc, cmd, new Location(carrierLoc.getWorld(),
+                        cmd.destination().x(), cmd.destination().y(), cmd.destination().z()));
                 carrier.navigate(dest, tick, cmd.mode() == ChaseBrain.Mode.SEARCH ? 20 : 8);
                 carrier.step();
                 if (cmd.breach() && !targetSheltered && siege.tick(tick, carrier, body, p, viewers)) {
@@ -457,18 +544,336 @@ final class HuntEvent implements HorrorEvent {
                 SoundCues.play(viewers, follow, Sound.AMBIENT_CAVE, SoundCategory.AMBIENT, 0.8f, 0.6f);
             }
             lastMode = cmd.mode();
-            if (cmd.attackAllowed() && tick >= nextAttackAt && bodyShown && himSeesTarget) {
-                double horizontal = Math.hypot(follow.getX() - p.getX(), follow.getZ() - p.getZ());
-                if (horizontal <= settings.attackRange() && Math.abs(follow.getY() - p.getY()) < 2.0) {
-                    attack(p, follow);
+            double horizontal = Math.hypot(follow.getX() - p.getX(), follow.getZ() - p.getZ());
+            double dy = follow.getY() - p.getY();
+            boolean maceSmash = HuntGear.smashBonus(loadout.mainHand(), dy) > 0 && horizontal <= settings.attackRange();
+            if (cmd.attackAllowed() && tick >= nextAttackAt && bodyShown && himSeesTarget && drawingUntil < 0
+                    && leapStart < 0) {
+                if (horizontal <= settings.attackRange() && (Math.abs(dy) < 2.0 || maceSmash)) {
+                    attack(p, follow, cmd.mode(), dy);
                     nextAttackAt = tick + settings.attackCooldownTicks();
+                }
+            }
+            ranged(tick, p, follow, cmd, distance);
+            elitePlays(tick, p, follow, cmd, distance);
+        }
+
+        /**
+         * Footwork of a skilled fighter (elite only): strafing up close, backing off after a hit,
+         * keeping a spear's distance, sidestepping a drawn bow.
+         */
+        private Location tactics(long tick, Player p, Location me, ChaseBrain.Command cmd, Location dest) {
+            boolean closing = cmd.mode() == ChaseBrain.Mode.PURSUE || cmd.mode() == ChaseBrain.Mode.BURST;
+            if (!elite || !closing || me.getWorld() != p.getWorld()) {
+                return dest;
+            }
+            Location pl = p.getLocation();
+            Vector toMe = me.toVector().subtract(pl.toVector()).setY(0);
+            double distance = toMe.length();
+            if (distance < 1.0E-3) {
+                return dest;
+            }
+            Vector away = toMe.clone().normalize();
+            if (tick < backoffUntil) {
+                return me.clone().add(away.multiply(3));
+            }
+            if (tick >= strafeFlipAt) {
+                strafeSide = ctx.him().random().nextBoolean() ? 1 : -1;
+                strafeFlipAt = tick + 15 + ctx.him().random().nextInt(25);
+            }
+            Vector side = new Vector(-away.getZ(), 0, away.getX()).multiply(strafeSide);
+            Material held = p.getInventory().getItemInMainHand().getType();
+            boolean aimingAtHim = p.getActiveItem().getType() == Material.BOW || p.getActiveItem().getType() == Material.CROSSBOW
+                    || held == Material.CROSSBOW;
+            if (aimingAtHim && distance > 4) {
+                // Never run straight at a drawn bow.
+                return dest.clone().add(side.multiply(3));
+            }
+            if (HuntGear.isSpear(loadout.mainHand()) && distance < settings.attackRange() + 1.5) {
+                // Keeps them at the end of the spear.
+                return pl.clone().add(away.multiply(settings.attackRange() - 0.5)).add(side.multiply(0.8));
+            }
+            if (distance < 6) {
+                return dest.clone().add(side.multiply(1.6));
+            }
+            return dest;
+        }
+
+        /** Elite only: a wind-charge leap with the mace, a speed potion against runners. */
+        private void elitePlays(long tick, Player p, Location from, ChaseBrain.Command cmd, double distance) {
+            if (!elite || aftermathSince >= 0) {
+                return;
+            }
+            var cfg = ctx.him().config().chase().elite();
+            if (drinkingUntil >= 0) {
+                if (tick >= drinkingUntil) {
+                    drinkingUntil = -1;
+                    speedBoostUntil = tick + 400;
+                    body.entity().clearActiveItem();
+                    body.entity().getEquipment().setItem(EquipmentSlot.OFF_HAND, null, true);
+                }
+                return;
+            }
+            boolean pursuing = cmd.mode() == ChaseBrain.Mode.PURSUE || cmd.mode() == ChaseBrain.Mode.BURST;
+            if (!pursuing || !bodyShown || drawingUntil >= 0 || leapStart >= 0) {
+                return;
+            }
+            boolean fleeing = new Vec(targetVelocity.x(), 0, targetVelocity.z()).length() > 0.15
+                    && p.getLocation().toVector().subtract(from.toVector()).dot(
+                            new Vector(targetVelocity.x(), 0, targetVelocity.z())) > 0;
+            if (cfg.speedPotion() && !drankSpeed && fleeing && distance > 10) {
+                drankSpeed = true;
+                ItemStack potion = new ItemStack(Material.POTION);
+                potion.editMeta(PotionMeta.class, meta -> meta.setBasePotionType(org.bukkit.potion.PotionType.SWIFTNESS));
+                body.entity().getEquipment().setItem(EquipmentSlot.OFF_HAND, potion, true);
+                body.entity().startUsingItem(EquipmentSlot.OFF_HAND);
+                drinkingUntil = tick + 24;
+                SoundCues.play(viewers, from, Sound.ENTITY_GENERIC_DRINK, SoundCategory.HOSTILE, 1.0f, 0.8f);
+                ctx.him().log().debug(() -> "hunt: drinks a speed potion");
+                return;
+            }
+            if (cfg.leap() && HuntGear.isMace(loadout.mainHand()) && tick >= nextLeapAt && himSeesTarget
+                    && distance >= 4 && distance <= 12) {
+                startLeap(tick, p, from);
+            }
+        }
+
+        private static final double LEAP_APEX = 5;
+        private static final int LEAP_TICKS = 18;
+
+        /** A wind charge under his feet: up, over, and down on them. Only along a clear arc. */
+        private void startLeap(long tick, Player p, Location from) {
+            nextLeapAt = tick + 60;
+            Location pl = p.getLocation();
+            Location aim = pl.clone().add(targetVelocity.x() * LEAP_TICKS, 0, targetVelocity.z() * LEAP_TICKS);
+            Optional<Location> landing = Ground.findStandable(p.getWorld(), aim.getBlockX(), aim.getBlockY(),
+                    aim.getBlockZ(), 2, 3);
+            if (landing.isEmpty()) {
+                return;
+            }
+            Location to = landing.get();
+            for (int i = 1; i < 10; i++) {
+                double t = i / 10.0;
+                Location at = arc(from, to, t);
+                for (int dy = 0; dy <= 1; dy++) {
+                    if (!Ground.free(at.getWorld().getType(at.getBlockX(), at.getBlockY() + dy, at.getBlockZ()))) {
+                        return;
+                    }
+                }
+            }
+            leapFrom = from.clone();
+            leapTo = to;
+            leapStart = tick;
+            nextLeapAt = tick + 160;
+            SoundCues.play(viewers, from, Sound.ENTITY_WIND_CHARGE_WIND_BURST, SoundCategory.HOSTILE, 1.0f, 1.0f);
+            for (Player v : viewers) {
+                if (v.isOnline() && v.getWorld() == from.getWorld()) {
+                    v.spawnParticle(Particle.GUST_EMITTER_SMALL, from, 1);
+                }
+            }
+            ctx.him().log().debug(() -> "hunt: wind-charge leap towards " + p.getName());
+        }
+
+        private static Location arc(Location from, Location to, double t) {
+            Location at = from.clone().add(to.clone().subtract(from).toVector().multiply(t));
+            at.add(0, HuntGear.leapHeight(t, LEAP_APEX), 0);
+            return at;
+        }
+
+        private void leapTick(long tick, Player p) {
+            double t = (tick - leapStart) / (double) LEAP_TICKS;
+            Location at = arc(leapFrom, leapTo, Math.min(1, t));
+            at.setYaw(MathUtil.yawTowards(at.getX(), at.getZ(), p.getX(), p.getZ()));
+            carrier.teleport(at);
+            if (t < 1) {
+                return;
+            }
+            leapStart = -1;
+            Location pl = p.getLocation();
+            double horizontal = Math.hypot(leapTo.getX() - pl.getX(), leapTo.getZ() - pl.getZ());
+            if (horizontal <= settings.attackRange() + 0.5 && Math.abs(leapTo.getY() - pl.getY()) < 2.5) {
+                attack(p, leapTo, ChaseBrain.Mode.BURST, LEAP_APEX);
+                nextAttackAt = tick + settings.attackCooldownTicks();
+            }
+        }
+
+        /** At the highest tier, badly hurt: he calls others to fight with him. */
+        private void summonMinions(Player p) {
+            var cfg = ctx.him().config().chase().elite();
+            minionsSummoned = true;
+            SoundCues.play(viewers, body.location(), Sound.ENTITY_EVOKER_PREPARE_SUMMON, SoundCategory.HOSTILE, 1.0f, 0.6f);
+            for (int i = 0; i < cfg.minionCount() && !cfg.minionTypes().isEmpty(); i++) {
+                Optional<SpotFinder.Spot> spot = ctx.him().spots().hiddenOrBehind(p, 4, 10);
+                Location at = spot.map(SpotFinder.Spot::feet).orElseGet(() ->
+                        ctx.him().spots().near(p.getLocation(), 6).orElse(null));
+                if (at == null) {
+                    continue;
+                }
+                org.bukkit.entity.EntityType type = org.bukkit.entity.EntityType.valueOf(
+                        cfg.minionTypes().get(ctx.him().random().nextInt(cfg.minionTypes().size())));
+                org.bukkit.entity.Entity e = at.getWorld().spawnEntity(at, type,
+                        org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.CUSTOM, spawned -> {
+                            spawned.setPersistent(false);
+                            ctx.him().entities().tags().markMinion(spawned, p.getUniqueId());
+                        });
+                if (e instanceof org.bukkit.entity.Mob mob && mob.isValid()) {
+                    mob.setTarget(p);
+                    mob.setRemoveWhenFarAway(true);
+                    minions.add(mob);
+                    for (Player v : viewers) {
+                        if (v.isOnline() && v.getWorld() == at.getWorld()) {
+                            v.spawnParticle(Particle.LARGE_SMOKE, at.clone().add(0, 0.8, 0), 20, 0.3, 0.6, 0.3, 0.02);
+                        }
+                    }
+                }
+            }
+            ctx.him().log().debug(() -> "hunt: summoned " + minions.size() + " to fight with him");
+        }
+
+        private void dismissMinions() {
+            for (org.bukkit.entity.Mob m : minions) {
+                if (m.isValid()) {
+                    m.getWorld().spawnParticle(Particle.LARGE_SMOKE, m.getLocation().add(0, 0.8, 0), 20, 0.3, 0.6, 0.3,
+                            0.02);
+                    m.remove();
+                }
+            }
+            minions.clear();
+        }
+
+        /**
+         * Bow and splash potions, for the players who meet a HIM carrying them. Only while he is
+         * visible and can see them; never more than the configured pace.
+         */
+        private void ranged(long tick, Player p, Location from, ChaseBrain.Command cmd, double distance) {
+            if (drawingUntil >= 0) {
+                if (tick >= drawingUntil) {
+                    releaseArrow(tick, p);
+                }
+                return;
+            }
+            boolean pursuing = cmd.mode() == ChaseBrain.Mode.PURSUE || cmd.mode() == ChaseBrain.Mode.SIEGE;
+            if (!bodyShown || !himSeesTarget || !pursuing || aftermathSince >= 0) {
+                return;
+            }
+            boolean fleeing = new Vec(targetVelocity.x(), 0, targetVelocity.z()).length() > 0.15
+                    && p.getLocation().toVector().subtract(from.toVector()).dot(
+                            new Vector(targetVelocity.x(), 0, targetVelocity.z())) > 0;
+            var weapons = ctx.him().config().chase().weapons();
+            if (loadout.ranged() != null && tick >= nextShotAt && distance >= 7 && distance <= 26
+                    && (fleeing || cmd.mode() == ChaseBrain.Mode.SIEGE || ctx.him().random().nextDouble() < 0.01)) {
+                // Out comes the bow.
+                body.entity().getEquipment().setItem(EquipmentSlot.HAND, item(loadout.ranged(), loadout.glint()), true);
+                body.entity().startUsingItem(EquipmentSlot.HAND);
+                drawingUntil = tick + 20;
+                return;
+            }
+            if (loadout.potions() && potionsUsed < weapons.maxPotions() && tick >= nextPotionAt && distance >= 3.5
+                    && distance <= 12) {
+                PotionEffectType effect = choosePotion(tick, p, fleeing, weapons.potionEffects());
+                if (effect != null) {
+                    throwPotion(p, from, effect, distance);
+                    nextPotionAt = tick + weapons.potionCooldownTicks();
+                    potionsUsed++;
                 }
             }
         }
 
-        private void attack(Player p, Location from) {
+        private void releaseArrow(long tick, Player p) {
+            drawingUntil = -1;
+            nextShotAt = tick + ctx.him().config().chase().weapons().bowCooldownTicks();
+            Mannequin m = body.entity();
+            Location eye = m.getEyeLocation();
+            double speed = 2.6;
+            double d = eye.distance(p.getEyeLocation());
+            double lead = d / speed;
+            Vector aim = p.getLocation().toVector().add(new Vector(targetVelocity.x() * lead, 1.1, targetVelocity.z() * lead))
+                    .subtract(eye.toVector());
+            aim.setY(aim.getY() + HuntGear.arrowLift(d, speed));
+            if (aim.lengthSquared() > 1.0E-4 && himSeesTarget) {
+                Arrow arrow = m.launchProjectile(Arrow.class, aim.normalize().multiply(speed));
+                arrow.setPersistent(false);
+                arrow.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+                arrow.setVisibleByDefault(false);
+                ctx.him().entities().tags().markProjectile(arrow, p.getUniqueId());
+                for (Player v : viewers) {
+                    if (v.isOnline()) {
+                        v.showEntity(ctx.him().plugin(), arrow);
+                    }
+                }
+                SoundCues.play(viewers, eye, Sound.ENTITY_ARROW_SHOOT, SoundCategory.HOSTILE, 1.0f, 0.8f);
+            }
+            m.clearActiveItem();
+            m.getEquipment().setItem(EquipmentSlot.HAND, item(loadout.mainHand(), loadout.glint()), true);
+        }
+
+        /** Slowness for runners, weakness for fighters, darkness in the dark. */
+        private PotionEffectType choosePotion(long tick, Player p, boolean fleeing, List<String> allowed) {
+            if (fleeing && p.isSprinting() && allowed.contains("SLOWNESS") && !p.hasPotionEffect(PotionEffectType.SLOWNESS)) {
+                return PotionEffectType.SLOWNESS;
+            }
+            if (tick - lastHitByPlayerAt < 100 && allowed.contains("WEAKNESS")
+                    && !p.hasPotionEffect(PotionEffectType.WEAKNESS)) {
+                return PotionEffectType.WEAKNESS;
+            }
+            if (p.getLocation().getBlock().getLightLevel() <= 7 && allowed.contains("DARKNESS")
+                    && !p.hasPotionEffect(PotionEffectType.DARKNESS) && ctx.him().random().nextDouble() < 0.02) {
+                return PotionEffectType.DARKNESS;
+            }
+            return null;
+        }
+
+        private void throwPotion(Player p, Location from, PotionEffectType effect, double distance) {
+            ItemStack stack = new ItemStack(Material.SPLASH_POTION);
+            int duration = effect == PotionEffectType.DARKNESS ? 120 : effect == PotionEffectType.WEAKNESS ? 100 : 80;
+            stack.editMeta(PotionMeta.class, meta -> meta.addCustomEffect(new PotionEffect(effect, duration, 0), true));
+            Mannequin m = body.entity();
+            Vector to = p.getLocation().toVector().subtract(m.getEyeLocation().toVector());
+            Vector vel = to.clone().setY(0).normalize().multiply(0.35 + distance * 0.045).setY(0.25 + to.getY() * 0.05);
+            ThrownPotion potion = m.launchProjectile(ThrownPotion.class, vel);
+            potion.setItem(stack);
+            potion.setPersistent(false);
+            potion.setVisibleByDefault(false);
+            ctx.him().entities().tags().markProjectile(potion, p.getUniqueId());
+            for (Player v : viewers) {
+                if (v.isOnline()) {
+                    v.showEntity(ctx.him().plugin(), potion);
+                }
+            }
+            m.swingOffHand();
+            SoundCues.play(viewers, from, Sound.ENTITY_WITCH_THROW, SoundCategory.HOSTILE, 1.0f, 0.7f);
+            ctx.him().log().debug(() -> "hunt: threw " + effect.getKey().getKey() + " at " + p.getName());
+        }
+
+        private void attack(Player p, Location from, ChaseBrain.Mode mode, double heightAbove) {
             body.entity().swingMainHand();
+            Material weapon = loadout.mainHand();
             double damage = settings.attackDamage();
+            double knock = 0.45;
+            if (HuntGear.isAxe(weapon) && p.isBlocking()) {
+                // An axe takes the shield out of their hands for a while, as it would for anyone.
+                p.setCooldown(Material.SHIELD, 100);
+                p.clearActiveItem();
+                SoundCues.play(viewers, p.getLocation(), Sound.ITEM_SHIELD_BREAK, SoundCategory.PLAYERS, 1.0f, 0.8f);
+            }
+            if (HuntGear.isSpear(weapon) && mode == ChaseBrain.Mode.BURST) {
+                // A lunge.
+                damage += 1.5;
+                knock = 0.8;
+            }
+            double smash = HuntGear.smashBonus(weapon, heightAbove);
+            if (smash > 0) {
+                damage += smash;
+                knock = 0.9;
+                SoundCues.play(viewers, p.getLocation(), Sound.ITEM_MACE_SMASH_GROUND_HEAVY, SoundCategory.HOSTILE, 1.0f,
+                        0.8f);
+                for (Player v : viewers) {
+                    if (v.isOnline() && v.getWorld() == p.getWorld()) {
+                        v.spawnParticle(Particle.BLOCK, p.getLocation(), 30, 0.6, 0.1, 0.6,
+                                p.getLocation().subtract(0, 0.5, 0).getBlock().getBlockData());
+                    }
+                }
+            }
             if (!settings.lethal()) {
                 damage = Math.min(damage, Math.max(0, p.getHealth() - 1.0));
             }
@@ -483,10 +888,14 @@ final class HuntEvent implements HorrorEvent {
             ctx.him().log().debug(() -> "hunt: hit " + p.getName() + " for " + dealt + ", health now " + p.getHealth());
             Vector push = p.getLocation().toVector().subtract(from.toVector()).setY(0);
             if (push.lengthSquared() > 1.0E-4) {
-                p.setVelocity(p.getVelocity().add(push.normalize().multiply(0.45).setY(0.28)));
+                p.setVelocity(p.getVelocity().add(push.normalize().multiply(knock).setY(0.28)));
             }
             if (learns()) {
                 ctx.session().memory().chase().recordHitLanded();
+            }
+            if (elite) {
+                // Hit, then step back out of reach, like a player who knows what they are doing.
+                backoffUntil = ctx.him().tick() + (HuntGear.isSpear(weapon) ? 12 : 6);
             }
         }
 
@@ -637,6 +1046,16 @@ final class HuntEvent implements HorrorEvent {
                     addLandmark(new Landmark(Landmark.Kind.ATTACK_SITE, id, pl.getWorld().getName(), pl.getBlockX(),
                             pl.getBlockY(), pl.getBlockZ(), now));
                 }
+                case SLAIN -> {
+                    outcome = Outcome.SLAIN;
+                    if (memory != null) {
+                        memory.chase().recordSlain();
+                    }
+                    Location at = body.location();
+                    addLandmark(new Landmark(Landmark.Kind.ATTACK_SITE, id, at.getWorld().getName(), at.getBlockX(),
+                            at.getBlockY(), at.getBlockZ(), now));
+                    dropHead(at);
+                }
                 case OUTRAN, LOST_SIGHT, SHELTERED, TIMEOUT, FLEW, TELEPORTED -> {
                     outcome = Outcome.ESCAPED;
                     EscapeMethod method = switch (reason) {
@@ -677,10 +1096,59 @@ final class HuntEvent implements HorrorEvent {
             finish(outcome);
         }
 
+        /** Rarely, he leaves his head behind. */
+        private void dropHead(Location at) {
+            if (ctx.him().random().nextDouble() >= ctx.him().config().chase().combat().headDropChance()) {
+                return;
+            }
+            ItemStack head = new ItemStack(Material.PLAYER_HEAD);
+            head.setData(DataComponentTypes.PROFILE, ctx.him().entities().skinProfile());
+            head.setData(DataComponentTypes.ITEM_NAME, Component.text("HIM 的頭", NamedTextColor.WHITE));
+            head.setData(DataComponentTypes.LORE, ItemLore.lore(List.of(
+                    Component.text("他記得是誰。", NamedTextColor.DARK_GRAY).decoration(TextDecoration.ITALIC, false))));
+            at.getWorld().dropItemNaturally(at.clone().add(0, 0.5, 0), head);
+            ctx.him().log().debug(() -> "hunt: he left his head behind at " + at.toVector());
+        }
+
+        /** Killed: he goes down, lies still, and is gone in smoke. */
+        private void dying(long tick) {
+            Mannequin m = body.entity();
+            long t = tick - aftermathSince;
+            if (!deathShown) {
+                deathShown = true;
+                carrier.stop();
+                m.getEquipment().setItem(EquipmentSlot.HAND, null, true);
+                if (Mannequin.validPoses().contains(Pose.SLEEPING)) {
+                    m.setPose(Pose.SLEEPING, true);
+                }
+                SoundCues.play(viewers, m.getLocation(), Sound.ENTITY_PLAYER_DEATH, SoundCategory.HOSTILE, 1.0f, 0.5f);
+                SoundCues.play(viewers, m.getLocation(), Sound.AMBIENT_CAVE, SoundCategory.AMBIENT, 0.8f, 0.5f);
+            }
+            if (t % 4 == 0) {
+                for (Player v : viewers) {
+                    if (v.isOnline() && v.getWorld() == m.getWorld()) {
+                        v.spawnParticle(Particle.LARGE_SMOKE, m.getLocation().add(0, 0.3, 0), 6, 0.6, 0.15, 0.3, 0.01);
+                    }
+                }
+            }
+            if (t >= 40) {
+                for (Player v : viewers) {
+                    if (v.isOnline() && v.getWorld() == m.getWorld()) {
+                        v.spawnParticle(Particle.LARGE_SMOKE, m.getLocation().add(0, 0.4, 0), 40, 0.5, 0.4, 0.5, 0.03);
+                    }
+                }
+                finish(outcome());
+            }
+        }
+
         private void aftermath(long tick) {
             Player p = ctx.target();
             if (!body.valid() || !p.isOnline() || p.getWorld() != body.location().getWorld()) {
                 finish(outcome());
+                return;
+            }
+            if (endReason == ChaseBrain.EndReason.SLAIN) {
+                dying(tick);
                 return;
             }
             body.lookAt(p.getEyeLocation(), false);
@@ -697,12 +1165,44 @@ final class HuntEvent implements HorrorEvent {
         }
 
         @Override
-        protected void onBodyHit(HimBody b, Player attacker) {
+        protected void onBodyHit(HimBody b, Player attacker, double damage) {
+            var combat = ctx.him().config().chase().combat();
+            long now = ctx.him().tick();
+            if (endReason != null || now - lastHurtAt < 10) {
+                // Already over, or still flinching from the last hit (as anyone would be).
+                return;
+            }
+            lastHurtAt = now;
+            lastHitByPlayerAt = now;
             hits++;
             if (learns()) {
                 ctx.session().memory().chase().recordHitTaken();
             }
             // The brain reacts with a stagger (a step back) on its next tick.
+            if (!combat.killable()) {
+                return;
+            }
+            double taken = HuntGear.damageTaken(damage, armorCounted, combat.armorReductionPerPiece());
+            health -= taken;
+            Location at = body.location();
+            body.entity().playHurtAnimation(0);
+            SoundCues.play(viewers, at, Sound.ENTITY_PLAYER_HURT, SoundCategory.HOSTILE, 1.0f, 0.5f);
+            ctx.him().log().debug(() -> String.format(Locale.ROOT, "hunt: %s hit him for %.1f (%.1f taken), %.1f/%.0f left",
+                    attacker.getName(), damage, taken, Math.max(0, health), maxHealth));
+            if (bossBar != null) {
+                bossBar.progress((float) Math.max(0, Math.min(1, health / maxHealth)));
+            }
+            var eliteCfg = ctx.him().config().chase().elite();
+            if (health > 0 && elite && eliteCfg.minions() && !minionsSummoned && loadout.tier() >= eliteCfg.minionMinTier()
+                    && health < maxHealth * eliteCfg.minionBelowHealth()) {
+                summonMinions(attacker);
+            }
+            if (health <= 0) {
+                end(ChaseBrain.EndReason.SLAIN);
+            } else if (health < maxHealth * combat.fleeBelow() && ctx.him().random().nextDouble() < combat.fleeChance()) {
+                // Badly hurt, he backs off. He will remember this.
+                end(ChaseBrain.EndReason.REPELLED);
+            }
         }
 
         @Override
@@ -750,6 +1250,8 @@ final class HuntEvent implements HorrorEvent {
 
         @Override
         protected void cleanup() {
+            hideBossBar();
+            dismissMinions();
             if (siege != null && viewers != null) {
                 siege.stop(viewers);
             }

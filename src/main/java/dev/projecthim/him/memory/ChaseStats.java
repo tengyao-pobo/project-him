@@ -14,6 +14,7 @@ public final class ChaseStats {
     private int escapes;
     private int caught;
     private int repelled;
+    private int slain;
     private int hitsLanded;
     private int hitsTaken;
     private long lastHuntAt;
@@ -36,6 +37,16 @@ public final class ChaseStats {
     public void recordRepelled() {
         repelled++;
         escapeMethods.merge(EscapeMethod.FOUGHT.name(), 1, Integer::sum);
+    }
+
+    /** The player killed him. */
+    public void recordSlain() {
+        slain++;
+        escapeMethods.merge(EscapeMethod.FOUGHT.name(), 1, Integer::sum);
+    }
+
+    public int slain() {
+        return slain;
     }
 
     public void recordHitLanded() {

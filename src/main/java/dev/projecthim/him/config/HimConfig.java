@@ -3,6 +3,7 @@ package dev.projecthim.him.config;
 import dev.projecthim.him.chase.ChaseSettings;
 import dev.projecthim.him.director.DirectorSettings;
 import dev.projecthim.him.director.Stage;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.LinkedHashMap;
@@ -64,7 +65,51 @@ public record HimConfig(
     }
 
     public record Chase(boolean enabled, int maxConcurrent, ChaseSettings settings, String deathMessage, Siege siege,
-                        Gear gear, Flight flight, Teleport teleport) {
+                        Gear gear, Flight flight, Teleport teleport, Combat combat, Weapons weapons, Elite elite) {
+    }
+
+    /**
+     * How he fights once he is well equipped (adaptive tier 3 = diamond, 4 = netherite).
+     *
+     * @param minTier          from this tier on he fights like a skilled player (strafing, hit and back off,
+     *                         keeping a spear's distance, dodging a drawn bow)
+     * @param leap             with a mace: wind-charge leaps and a smash on landing
+     * @param speedPotion      drinks one speed potion per hunt when a player keeps running
+     * @param speedBoost       how much faster that makes him (keep his run below a sprinting player)
+     * @param minions          summons a few monsters that fight with him
+     * @param minionMinTier    from this tier on
+     * @param minionBelowHealth when his health falls below this fraction
+     * @param minionCount      how many
+     * @param minionTypes      entity types, e.g. ZOMBIE, SKELETON, SPIDER
+     * @param bossBarMinTier   from this tier on the hunted see his health as a boss bar (0 = never)
+     */
+    public record Elite(int minTier, boolean leap, boolean speedPotion, double speedBoost, boolean minions,
+                        int minionMinTier, double minionBelowHealth, int minionCount, List<String> minionTypes,
+                        int bossBarMinTier) {
+    }
+
+    /**
+     * Fighting HIM during a hunt.
+     *
+     * @param killable               false: the old rule, he is driven off after a number of hits
+     * @param health                 his health (20 = a player's ten hearts)
+     * @param armorReductionPerPiece damage he takes is reduced this much per armour piece he wears
+     * @param fleeBelow              below this fraction of health he may retreat instead of fighting on
+     * @param fleeChance             chance per hit, once below {@code fleeBelow}, that he retreats
+     * @param headDropChance         chance he drops his head when killed
+     */
+    public record Combat(boolean killable, double health, double armorReductionPerPiece, double fleeBelow,
+                         double fleeChance, double headDropChance) {
+    }
+
+    /**
+     * Weapons besides the one in his hand (adaptive gear decides who meets which).
+     *
+     * @param potionEffects  allowed effects: SLOWNESS, WEAKNESS, DARKNESS
+     */
+    public record Weapons(boolean bow, double arrowDamage, int bowCooldownTicks, boolean potions,
+                          List<String> potionEffects, int potionCooldownTicks, int maxPotions, boolean spears,
+                          boolean maces) {
     }
 
     /**
@@ -101,16 +146,17 @@ public record HimConfig(
     /**
      * Equipment HIM carries during hunts.
      *
-     * @param fixed slot name (main-hand, off-hand, helmet, chestplate, leggings, boots) to material name
+     * @param fixed slot name (main-hand, off-hand, helmet, chestplate, leggings, boots, ranged) to material name
      * @param maxTier         highest adaptive tier (0-4)
      * @param enchantGlint    tier 4 shines with an enchantment glint
      * @param fixedGlint      the fixed loadout shines with an enchantment glint
      * @param maxDamageBonus  cap on the damage a weapon adds
-     * @param maxRepelBonus   cap on the extra hits armour adds to repel him
+     * @param maxRepelBonus   cap on the armour pieces that count (extra hits to repel him, or damage reduction)
+     * @param fixedPotions    the fixed loadout carries splash potions
      */
     public record Gear(GearMode mode, Map<String, String> fixed, boolean weaponAffectsDamage,
                        boolean armorAffectsRepel, int maxTier, boolean enchantGlint, boolean fixedGlint,
-                       double maxDamageBonus, int maxRepelBonus) {
+                       double maxDamageBonus, int maxRepelBonus, boolean fixedPotions) {
     }
 
     /**
@@ -296,7 +342,7 @@ public record HimConfig(
                 buildMaterial,
                 r.integer("chase.siege.ticks-per-block", 20, 1, 400));
         Map<String, String> fixedGear = new LinkedHashMap<>();
-        for (String slot : List.of("main-hand", "off-hand", "helmet", "chestplate", "leggings", "boots")) {
+        for (String slot : List.of("main-hand", "off-hand", "helmet", "chestplate", "leggings", "boots", "ranged")) {
             String item = r.string("chase.equipment.fixed." + slot, "").trim();
             if (!item.isEmpty()) {
                 if (org.bukkit.Material.matchMaterial(item) == null) {
@@ -315,13 +361,39 @@ public record HimConfig(
                 r.bool("chase.equipment.enchant-glint", true),
                 r.bool("chase.equipment.fixed.enchant-glint", false),
                 r.number("chase.equipment.max-damage-bonus", 2.0, 0, 20),
-                r.integer("chase.equipment.max-repel-bonus", 3, 0, 20));
+                r.integer("chase.equipment.max-repel-bonus", 3, 0, 20),
+                r.bool("chase.equipment.fixed.potions", false));
         Chase chase = new Chase(r.bool("chase.enabled", true), r.integer("chase.max-concurrent", 1, 0, 16), cs,
                 r.string("chase.death-message", "{player} 再也沒有回來。"), siege, gear,
                 new Flight((int) (r.number("chase.flight.escape-seconds", 30, 3, 600) * 20),
                         r.bool("chase.flight.watch-from-below", true)),
                 new Teleport(r.integer("chase.teleport.follows", 2, 0, 20),
-                        r.bool("chase.teleport.block-commands", false)));
+                        r.bool("chase.teleport.block-commands", false)),
+                new Combat(r.bool("chase.combat.killable", true),
+                        r.number("chase.combat.health", 60, 1, 2000),
+                        r.number("chase.combat.armor-reduction-per-piece", 0.08, 0, 0.25),
+                        r.number("chase.combat.flee-below", 0.3, 0, 1),
+                        r.number("chase.combat.flee-chance", 0.35, 0, 1),
+                        r.number("chase.combat.head-drop-chance", 0.05, 0, 1)),
+                new Weapons(r.bool("chase.weapons.bow", true),
+                        r.number("chase.weapons.arrow-damage", 4.0, 0, 40),
+                        r.integer("chase.weapons.bow-cooldown-ticks", 60, 20, 2000),
+                        r.bool("chase.weapons.potions", true),
+                        potionEffects(r),
+                        r.integer("chase.weapons.potion-cooldown-ticks", 300, 40, 6000),
+                        r.integer("chase.weapons.max-potions", 3, 0, 20),
+                        r.bool("chase.weapons.spears", true),
+                        r.bool("chase.weapons.maces", true)),
+                new Elite(r.integer("chase.elite.min-tier", 3, 1, 5),
+                        r.bool("chase.elite.wind-charge-leap", true),
+                        r.bool("chase.elite.speed-potion", true),
+                        r.number("chase.elite.speed-boost", 1.1, 1.0, 2.0),
+                        r.bool("chase.elite.minions.enabled", true),
+                        r.integer("chase.elite.minions.min-tier", 4, 1, 5),
+                        r.number("chase.elite.minions.below-health", 0.5, 0, 1),
+                        r.integer("chase.elite.minions.count", 3, 0, 8),
+                        minionTypes(r),
+                        r.integer("chase.elite.boss-bar-min-tier", 4, 0, 5)));
         Impersonation impersonation = new Impersonation(
                 r.bool("impersonation.enabled", true),
                 r.bool("impersonation.show-name", true),
@@ -392,5 +464,48 @@ public record HimConfig(
         return new HimConfig(enabled, logLevel, worlds, players, director, budget, groupRadius, apparitions, chase,
                 edits, mp, memory, perf, messages, impersonation, signs,
                 List.copyOf(r.warnings()));
+    }
+
+    private static List<String> minionTypes(ConfigReader r) {
+        String path = "chase.elite.minions.types";
+        if (!r.has(path)) {
+            return List.of("ZOMBIE", "SKELETON");
+        }
+        List<String> out = new ArrayList<>();
+        for (String t : r.stringList(path)) {
+            String name = t.trim().toUpperCase(Locale.ROOT);
+            org.bukkit.entity.EntityType type;
+            try {
+                type = org.bukkit.entity.EntityType.valueOf(name);
+            } catch (IllegalArgumentException e) {
+                type = null;
+            }
+            if (type == null || !type.isAlive() || !type.isSpawnable()
+                    || !org.bukkit.entity.Monster.class.isAssignableFrom(type.getEntityClass())) {
+                r.error(path, "「" + t + "」不是可生成的敵對生物");
+            } else {
+                out.add(name);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static final List<String> POTION_EFFECTS = List.of("SLOWNESS", "WEAKNESS", "DARKNESS");
+
+    private static List<String> potionEffects(ConfigReader r) {
+        String path = "chase.weapons.potion-effects";
+        if (!r.has(path)) {
+            return POTION_EFFECTS;
+        }
+        List<String> out = new ArrayList<>();
+        for (String e : r.stringList(path)) {
+            String name = e.trim().toUpperCase(Locale.ROOT);
+            if (POTION_EFFECTS.contains(name)) {
+                out.add(name);
+            } else {
+                r.error(path, "未知的效果「" + e + "」，可用：" + String.join(", ", POTION_EFFECTS));
+            }
+        }
+        return List.copyOf(out);
     }
 }

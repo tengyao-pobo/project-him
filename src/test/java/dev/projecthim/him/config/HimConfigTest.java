@@ -75,4 +75,31 @@ class HimConfigTest {
         assertTrue(c.worlds().allowed("survival"));
         assertFalse(c.worlds().allowed("creative"));
     }
+
+    @Test
+    void combatAndEliteDefaults() throws ConfigException {
+        HimConfig c = HimConfig.load(defaults(), EVENTS);
+        assertEquals(60, c.chase().combat().health());
+        assertEquals(3, c.chase().elite().minionCount());
+        assertEquals(java.util.List.of("ZOMBIE", "SKELETON"), c.chase().elite().minionTypes());
+        assertEquals(java.util.List.of("SLOWNESS", "WEAKNESS", "DARKNESS"), c.chase().weapons().potionEffects());
+        assertEquals(4, c.chase().elite().bossBarMinTier());
+    }
+
+    @Test
+    void listsMissingFromAnOlderConfigFallBackToTheBundledDefaults() throws ConfigException {
+        // Like JavaPlugin#getConfig(): the server's file, with the bundled config.yml as defaults.
+        YamlConfiguration old = new YamlConfiguration();
+        old.set("config-version", HimConfig.CURRENT_VERSION);
+        old.setDefaults(defaults());
+        HimConfig c;
+        try {
+            c = HimConfig.load(old, EVENTS);
+        } catch (ConfigException e) {
+            throw new AssertionError(e.errors().toString(), e);
+        }
+        assertEquals(java.util.List.of("ZOMBIE", "SKELETON"), c.chase().elite().minionTypes());
+        assertEquals(java.util.List.of("SLOWNESS", "WEAKNESS", "DARKNESS"), c.chase().weapons().potionEffects());
+        assertFalse(c.messages().signTexts().isEmpty());
+    }
 }

@@ -121,7 +121,7 @@ chase:
   search-seconds: 18
   # 距離超過多少格且看不見玩家時判定玩家逃脫。
   escape-distance: 40
-  # 玩家擊中 HIM 幾次後他會被擊退並撤離。
+  # （combat.killable: false 時）玩家擊中 HIM 幾次後他會被擊退並撤離。
   hits-to-repel: 6
   # 假撤退（轉身消失、再從前方繞出）的傾向（0-1）。
   fake-retreat-chance: 0.35
@@ -181,16 +181,68 @@ chase:
       chestplate: ""
       leggings: ""
       boots: ""
+      # 遠程武器（BOW 或留空）與是否攜帶喝擲藥水。
+      ranged: ""
+      potions: false
       # fixed 裝備是否帶附魔光澤。
       enchant-glint: false
     # 武器是否增加傷害（例如鐵劍 +1、鑽石劍 +1.5、獄髓劍 +2）。
     weapon-affects-damage: true
     # 武器增加的傷害上限。
     max-damage-bonus: 2.0
-    # 每件盔甲讓擊退他所需的次數 +1。
+    # 他穿的盔甲是否讓他更耐打：可擊殺時每件減少他受到的傷害（見 combat），否則每件讓擊退所需次數 +1。
     armor-affects-repel: true
-    # 盔甲增加的擊退次數上限（保留「反擊」這條逃脫路線）。
+    # 計算的盔甲件數上限（保留「反擊」這條逃脫路線）。
     max-repel-bonus: 3
+  # 與 HIM 戰鬥。
+  combat:
+    # true：他有生命值，可以被打倒（打倒時倒地化為煙霧消失）；false：舊規則，被擊中 hits-to-repel 次後撤退。
+    killable: true
+    # 生命值（20 = 玩家的 10 顆心）。傷害就是你實際打出的傷害（武器、附魔、爆擊、弓箭都算）。
+    health: 60
+    # 他每穿一件盔甲，受到的傷害減少多少（最多算 equipment.max-repel-bonus 件）。
+    armor-reduction-per-piece: 0.08
+    # 生命低於此比例時，每次被擊中有 flee-chance 的機率撤退（他會記得）。
+    flee-below: 0.3
+    flee-chance: 0.35
+    # 被打倒時掉落他的頭（白眼皮膚的玩家頭顱）的機率。
+    head-drop-chance: 0.05
+  # 手上武器以外的武器（adaptive 會依玩家的習慣決定誰會遇到哪些：常逃跑的玩家較常遇到弓與緩速藥水，
+  # 常反擊的玩家較常遇到斧頭與重錘）。他的箭與藥水只會影響被追殺的玩家，其他人看不到也碰不到。
+  weapons:
+    # 弓：玩家逃跑、或站在他上不去的地方時，他會停下來拉弓射擊。
+    bow: true
+    arrow-damage: 4.0
+    bow-cooldown-ticks: 60
+    # 喝擲藥水：緩速（對逃跑的人）、虛弱（對反擊的人）、黑暗（在暗處）。
+    potions: true
+    potion-effects: [SLOWNESS, WEAKNESS, DARKNESS]
+    potion-cooldown-ticks: 300
+    max-potions: 3
+    # 長矛（攻擊距離較遠、衝刺時突刺）。
+    spears: true
+    # 重錘（從高處落下時重擊；鑽石級以上才會出現）。
+    maces: true
+  # 精良裝備（鑽石＝3、獄髓＝4）的他：像熟練的 PvP 玩家一樣戰鬥，但仍然可以被打倒。
+  elite:
+    # 從這個等級開始：左右走位、打一下退一步、保持長矛距離、看到你拉弓會閃開。
+    min-tier: 3
+    # 拿重錘時用風彈跳起，落在你身上重擊。
+    wind-charge-leap: true
+    # 你一直逃跑時，喝一瓶速度藥水（每場一次）。
+    speed-potion: true
+    # 速度藥水的加成。預設 1.1（奔跑 5.0 → 5.5），仍略低於玩家衝刺速度，衝刺逃跑仍然可行。
+    speed-boost: 1.1
+    # 召喚怪物協同作戰：達到 min-tier、生命低於 below-health 時召喚一次。
+    # 這些是真實的怪物：只會攻擊被追殺的玩家、不掉落物品與經驗，追殺結束時化為煙霧消失。
+    minions:
+      enabled: true
+      min-tier: 4
+      below-health: 0.5
+      count: 3
+      types: [ZOMBIE, SKELETON]
+    # 從這個等級開始，被追殺的人會看到他的 BOSS 血條（0 = 永不顯示）。
+    boss-bar-min-tier: 4
 
 # ----------------------------------------------------------------------------
 # 世界干擾

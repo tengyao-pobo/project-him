@@ -18,6 +18,8 @@ public enum Outcome {
     CAUGHT,
     /** The player drove HIM off by fighting during a hunt. */
     REPELLED,
+    /** The player killed HIM during a hunt. */
+    SLAIN,
     /** The player logged out during the encounter. */
     LOGGED_OUT,
     /** The encounter was cancelled for technical reasons (world change, death, performance). */

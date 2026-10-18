@@ -115,6 +115,10 @@ final class ConfigReader {
         }
     }
 
+    boolean has(String path) {
+        return root.contains(path);
+    }
+
     List<String> stringList(String path) {
         if (!root.contains(path)) {
             warn(path, "缺少此設定，使用空清單");
@@ -125,7 +129,10 @@ final class ConfigReader {
             return List.of();
         }
         List<String> out = new ArrayList<>();
-        for (Object o : root.getList(path, List.of())) {
+        // getList(path) (not getList(path, def)): only the former falls back to the plugin's bundled
+        // defaults when an older config.yml does not have the setting yet.
+        List<?> values = root.getList(path);
+        for (Object o : values == null ? List.of() : values) {
             if (o == null) {
                 continue;
             }
@@ -143,7 +150,8 @@ final class ConfigReader {
             error(path, "必須是 " + def.length + " 個數字的清單");
             return def.clone();
         }
-        List<?> raw = root.getList(path, List.of());
+        List<?> listed = root.getList(path);
+        List<?> raw = listed == null ? List.of() : listed;
         if (raw.size() != def.length) {
             error(path, "必須剛好有 " + def.length + " 個數字（每個階段一個），目前有 " + raw.size() + " 個");
             return def.clone();

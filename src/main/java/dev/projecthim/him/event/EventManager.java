@@ -238,11 +238,11 @@ public final class EventManager {
                 && instance.context().target().getUniqueId().equals(player);
     }
 
-    public void bodyHit(HimBody body, Player attacker) {
+    public void bodyHit(HimBody body, Player attacker, double damage) {
         for (EventInstance instance : List.copyOf(active)) {
             if (instance.owns(body)) {
                 try {
-                    instance.onBodyHit(body, attacker);
+                    instance.onBodyHit(body, attacker, damage);
                 } catch (RuntimeException e) {
                     him.log().error("Event " + instance.context().instanceId() + " failed handling a hit", e);
                     instance.finish(Outcome.INTERRUPTED);

@@ -76,6 +76,13 @@ public final class Learning {
                 p.nudge(Trait.ISOLATION, 0.015);
                 memory.adjustObsession(0.06);
             }
+            case SLAIN -> {
+                // Killed. He does not stay dead; he comes back angrier, and more careful.
+                p.nudge(Trait.AGGRESSION, 0.04);
+                p.nudge(Trait.PATIENCE, 0.02);
+                p.nudge(Trait.BOLDNESS, -0.01);
+                memory.adjustObsession(0.12);
+            }
             case LOGGED_OUT -> {
                 p.nudge(Trait.PATIENCE, 0.01);
                 memory.adjustObsession(0.04);

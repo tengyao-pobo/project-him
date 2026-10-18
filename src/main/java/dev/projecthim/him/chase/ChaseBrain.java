@@ -44,11 +44,11 @@ public final class ChaseBrain {
     }
 
     public enum EndReason {
-        CAUGHT, OUTRAN, LOST_SIGHT, SHELTERED, REPELLED, TIMEOUT, FLEW, TELEPORTED, STUCK, TARGET_GONE, ABORTED;
+        CAUGHT, OUTRAN, LOST_SIGHT, SHELTERED, REPELLED, TIMEOUT, FLEW, TELEPORTED, SLAIN, STUCK, TARGET_GONE, ABORTED;
 
         public boolean playerWon() {
             return this == OUTRAN || this == LOST_SIGHT || this == SHELTERED || this == REPELLED || this == TIMEOUT
-                    || this == FLEW || this == TELEPORTED;
+                    || this == FLEW || this == TELEPORTED || this == SLAIN;
         }
     }
 

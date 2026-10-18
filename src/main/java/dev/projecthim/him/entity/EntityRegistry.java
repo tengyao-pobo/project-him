@@ -104,6 +104,10 @@ public final class EntityRegistry {
         return tags.isOurs(entity);
     }
 
+    public EntityTags tags() {
+        return tags;
+    }
+
     public int activeBodies() {
         return bodies.size();
     }

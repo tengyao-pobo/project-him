@@ -56,6 +56,11 @@ public abstract class EventInstance {
         }
     }
 
+    /** A player hit one of HIM's bodies that belongs to this instance, for {@code damage} (the game's number). */
+    protected void onBodyHit(HimBody body, Player attacker, double damage) {
+        onBodyHit(body, attacker);
+    }
+
     /** A player hit one of HIM's bodies that belongs to this instance. */
     protected void onBodyHit(HimBody body, Player attacker) {
         setOutcome(attacker.getUniqueId(), Outcome.ATTACKED);

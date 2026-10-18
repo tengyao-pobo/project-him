@@ -212,7 +212,7 @@ plugins/HIM/data/
 
 | 狀態 | 意義 |
 |---|---|
-| ✅ 自動化測試 | JUnit 單元測試（48 項，`./gradlew test`）通過 |
+| ✅ 自動化測試 | JUnit 單元測試（49 項，`./gradlew test`）通過 |
 | ✅ 伺服器實測 | 在真實 Paper 26.3（build 205）上以 `/him selftest`（32 項）通過 |
 | ✅ 協定層實測 | 以無頭測試客戶端（mineflayer，26.1 協定經 ViaBackwards 轉譯）連入真實 Paper 26.3，記錄客戶端**實際收到的封包**驗證 |
 | ⏳ 尚待驗證 | 需要真人使用原版 26.3 客戶端觀察的項目 |

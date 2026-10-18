@@ -119,10 +119,17 @@ public final class GridPathfinder {
     }
 
     private final Blocks blocks;
+    private final boolean throughDoors;
     private final Map<Long, Cell> cache = new HashMap<>();
 
     public GridPathfinder(Blocks blocks) {
+        this(blocks, true);
+    }
+
+    /** @param throughDoors whether wooden doors and fence gates may be walked through (opened) */
+    public GridPathfinder(Blocks blocks, boolean throughDoors) {
         this.blocks = blocks;
+        this.throughDoors = throughDoors;
     }
 
     private Cell cell(int x, int y, int z) {
@@ -133,6 +140,9 @@ public final class GridPathfinder {
         Cell c = cache.get(k);
         if (c == null) {
             c = blocks.cell(x, y, z);
+            if (c == Cell.DOOR && !throughDoors) {
+                c = Cell.TALL;
+            }
             cache.put(k, c);
         }
         return c;

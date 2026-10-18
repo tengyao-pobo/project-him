@@ -95,6 +95,12 @@ public final class Personality {
 
     /** Repairs missing or out of range values after deserialisation. */
     public void sanitize() {
+        if (traits == null) {
+            traits = new LinkedHashMap<>();
+        }
+        if (baseline == null) {
+            baseline = new LinkedHashMap<>();
+        }
         for (Trait t : Trait.values()) {
             Double v = traits.get(t.name());
             traits.put(t.name(), v == null || !Double.isFinite(v) ? 0.5 : MathUtil.clamp(v, MIN, MAX));

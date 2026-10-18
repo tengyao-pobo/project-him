@@ -175,7 +175,8 @@ public final class HorrorDirector {
     }
 
     private static boolean modeAvailable(EventSpec s, PlayerContext ctx) {
-        if (s.supports(EncounterMode.PRIVATE)) {
+        // Only GROUP needs other players; SHARED works with whoever is there, even alone.
+        if (s.supports(EncounterMode.PRIVATE) || s.supports(EncounterMode.SHARED)) {
             return true;
         }
         return ctx.nearbyPlayers() > 0;

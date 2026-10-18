@@ -161,7 +161,9 @@ final class StalkerEvent implements HorrorEvent {
                 Player p = target();
                 // Launch on the next tick, once this instance released the player's lock.
                 Bukkit.getScheduler().runTask(ctx.him().plugin(), () -> {
-                    if (p.isOnline() && ctx.him().sessions().eligible(p)) {
+                    var him = ctx.him();
+                    if (p.isOnline() && !him.paused() && him.config().enabled() && him.huntSlotFree()
+                            && him.sessions().eligible(p)) {
                         EventManager.LaunchResult r = ctx.him().director().launch(p, "hunt", EncounterMode.PRIVATE,
                                 true, Trigger.PERIODIC);
                         ctx.him().log().debug(() -> "stalker escalated to hunt for " + p.getName() + ": " + r);

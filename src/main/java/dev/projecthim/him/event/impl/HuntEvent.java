@@ -113,16 +113,20 @@ final class HuntEvent implements HorrorEvent {
             if (spot.isEmpty()) {
                 return false;
             }
+            if (!ctx.him().canSpawnApparition()) {
+                return false;
+            }
             Location at = spot.get().feet();
             carrier = ctx.him().entities().spawnCarrier(at);
             if (carrier == null) {
                 return false;
             }
+            carrier.setThroughDoors(settings.openDoors());
             body = ctx.him().entities().spawnBody(at);
             if (body == null) {
                 return false;
             }
-            viewers = ctx.mode() == EncounterMode.SHARED ? ctx.participants() : List.of(p);
+            viewers = new ArrayList<>(ctx.mode() == EncounterMode.SHARED ? ctx.participants() : List.of(p));
             showBody();
             // Players who keep escaping through water meet a better swimmer.
             waterFactor = memory.chase().favouriteEscape() == EscapeMethod.WATER ? 0.85 : 0.5;
@@ -191,12 +195,12 @@ final class HuntEvent implements HorrorEvent {
         @Override
         protected void tick(long tick) {
             Player p = ctx.target();
-            if (!carrier.valid() || !body.valid()) {
-                end(ChaseBrain.EndReason.ABORTED);
-                return;
-            }
             if (aftermathSince >= 0) {
                 aftermath(tick);
+                return;
+            }
+            if (!carrier.valid() || !body.valid()) {
+                end(ChaseBrain.EndReason.ABORTED);
                 return;
             }
             Location carrierLoc = carrier.location();
@@ -344,7 +348,10 @@ final class HuntEvent implements HorrorEvent {
                 if ((Tag.WOODEN_DOORS.isTagged(b.getType()) || Tag.FENCE_GATES.isTagged(b.getType()))
                         && b.getBlockData() instanceof Openable o && !o.isOpen()) {
                     o.setOpen(true);
-                    b.setBlockData(o);
+                    // Journaled, so a crash mid-hunt cannot leave the door open for good.
+                    if (!ctx.him().journal().apply(b, o, ctx.him().clock().now() + 60_000L, "hunt_door")) {
+                        continue;
+                    }
                     SoundCues.play(viewers, b.getLocation().add(0.5, 0.5, 0.5),
                             Tag.FENCE_GATES.isTagged(b.getType()) ? Sound.BLOCK_FENCE_GATE_OPEN : Sound.BLOCK_WOODEN_DOOR_OPEN,
                             SoundCategory.BLOCKS, 1.0f, 0.8f);
@@ -364,10 +371,8 @@ final class HuntEvent implements HorrorEvent {
         }
 
         private void closeDoor(Block b) {
-            if (b.getBlockData() instanceof Openable o && o.isOpen()) {
-                o.setOpen(false);
-                b.setBlockData(o);
-            }
+            // Restores the recorded (closed) state unless someone changed the door since.
+            ctx.him().journal().restoreNow(b);
         }
 
         private void end(ChaseBrain.EndReason reason) {
@@ -439,7 +444,7 @@ final class HuntEvent implements HorrorEvent {
 
         private void aftermath(long tick) {
             Player p = ctx.target();
-            if (!p.isOnline() || p.getWorld() != body.location().getWorld()) {
+            if (!body.valid() || !p.isOnline() || p.getWorld() != body.location().getWorld()) {
                 finish(outcome());
                 return;
             }
@@ -470,6 +475,9 @@ final class HuntEvent implements HorrorEvent {
             if (!player.equals(ctx.target().getUniqueId())) {
                 if (body != null) {
                     body.forgetViewer(player);
+                }
+                if (viewers != null) {
+                    viewers.removeIf(v -> v.getUniqueId().equals(player));
                 }
                 return;
             }

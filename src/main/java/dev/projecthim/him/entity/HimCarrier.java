@@ -24,9 +24,15 @@ public final class HimCarrier {
     private double speed;
     private boolean lastPlanReachedGoal;
     private boolean removed;
+    private boolean throughDoors = true;
 
     HimCarrier(Location at) {
         this.position = at.clone();
+    }
+
+    /** Whether planned paths may go through wooden doors (the hunt opens them). */
+    public void setThroughDoors(boolean throughDoors) {
+        this.throughDoors = throughDoors;
     }
 
     /** Movement speed in blocks per second, applied by {@link #step()}. */
@@ -42,8 +48,15 @@ public final class HimCarrier {
      */
     public boolean navigate(Location destination, long tick, int replanTicks) {
         boolean stale = tick - lastPathTick >= replanTicks;
+        // A far away goal needs less precision: tolerate goal drift proportional to the distance.
+        double tolerance = Math.max(1.5, position.getWorld() == destination.getWorld()
+                ? position.distance(destination) * 0.15 : 1.5);
         boolean moved = lastGoal == null || lastGoal.getWorld() != destination.getWorld()
-                || lastGoal.distanceSquared(destination) > 2.25;
+                || lastGoal.distanceSquared(destination) > tolerance * tolerance;
+        if (stale && !moved && index < path.size()) {
+            // The plan is old but still heads to (almost) the same place: keep walking it.
+            stale = tick - lastPathTick >= replanTicks * 3L;
+        }
         if (index >= path.size() || stale || moved) {
             lastPathTick = tick;
             lastGoal = destination.clone();
@@ -58,7 +71,7 @@ public final class HimCarrier {
         if (destination.getWorld() != position.getWorld()) {
             return;
         }
-        GridPathfinder finder = new GridPathfinder(GridPathfinder.of(position.getWorld()));
+        GridPathfinder finder = new GridPathfinder(GridPathfinder.of(position.getWorld()), throughDoors);
         GridPathfinder.Point start = GridPathfinder.feet(position);
         GridPathfinder.Point goal = groundGoal(finder, destination);
         GridPathfinder.Result r = finder.find(start, goal, GridPathfinder.DEFAULT_MAX_NODES);

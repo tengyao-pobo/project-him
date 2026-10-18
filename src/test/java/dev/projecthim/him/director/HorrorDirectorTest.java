@@ -134,6 +134,14 @@ class HorrorDirectorTest {
     }
 
     @Test
+    void sharedOnlyEventsAreAvailableToLonePlayers() {
+        TensionTracker tension = new TensionTracker(0, random);
+        DirectorInput alone = input(context().underground(true).skyVisible(false).build(), tension, 3_600_000,
+                Trigger.PERIODIC);
+        assertTrue(director.candidates(alone, Stage.OBSESSED, 1.0).stream().anyMatch(s -> s.id().equals("tunnel")));
+    }
+
+    @Test
     void busyOrStrugglingServerHolds() {
         TensionTracker tension = new TensionTracker(0, random);
         DirectorInput busy = input(context().inCombat(true).build(), tension, 3_600_000, Trigger.PERIODIC);

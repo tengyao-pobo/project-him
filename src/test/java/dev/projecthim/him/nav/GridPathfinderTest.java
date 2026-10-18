@@ -121,6 +121,8 @@ class GridPathfinderTest {
         d.set(5, 1, 0, Cell.DOOR);
         d.set(5, 2, 0, Cell.DOOR);
         assertTrue(new GridPathfinder(d).find(p(0, 1, 0), p(10, 1, 0), 5000).reachesGoal());
+        assertFalse(new GridPathfinder(d, false).find(p(0, 1, 0), p(10, 1, 0), 5000).reachesGoal(),
+                "doors are walls when HIM may not open them");
         d.set(5, 1, 0, Cell.TALL);
         d.set(5, 2, 0, Cell.TALL);
         assertFalse(new GridPathfinder(d).find(p(0, 1, 0), p(10, 1, 0), 5000).reachesGoal());

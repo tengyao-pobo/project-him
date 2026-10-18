@@ -141,7 +141,7 @@ public final class DirectorService {
         if (event == null) {
             return EventManager.LaunchResult.UNKNOWN_EVENT;
         }
-        EncounterMode mode = requested;
+        EncounterMode mode = event.spec().supports(requested) ? requested : event.spec().modes().iterator().next();
         List<Player> participants = new ArrayList<>();
         participants.add(target);
         if (mode != EncounterMode.PRIVATE) {

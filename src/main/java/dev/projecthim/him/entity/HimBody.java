@@ -99,8 +99,14 @@ public final class HimBody {
         return viewers.contains(player.getUniqueId());
     }
 
+    /** Stops showing the body to a player who left the encounter (hides it if they are online). */
     public void forgetViewer(UUID id) {
-        viewers.remove(id);
+        Player p = Bukkit.getPlayer(id);
+        if (p != null) {
+            hide(p);
+        } else {
+            viewers.remove(id);
+        }
     }
 
     /** Moves to the location, keeping the location's rotation. Refuses to enter unloaded chunks. */

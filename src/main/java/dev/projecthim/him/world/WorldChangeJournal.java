@@ -81,8 +81,10 @@ public final class WorldChangeJournal {
         }
         changes.add(new Change(world, block.getX(), block.getY(), block.getZ(), block.getBlockData().getAsString(),
                 data.getAsString(), revertAt, reason));
-        block.setBlockData(data, false);
         dirty = true;
+        // Persist the record before (well, in order with) the change, so a crash cannot strand it.
+        flush();
+        block.setBlockData(data, false);
         return true;
     }
 
@@ -210,7 +212,11 @@ public final class WorldChangeJournal {
             Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
             Files.writeString(tmp, json, StandardCharsets.UTF_8);
-            Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             log.error("Could not write the world change journal", e);
         }

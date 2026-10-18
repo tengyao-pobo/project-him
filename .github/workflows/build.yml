@@ -31,17 +31,26 @@ jobs:
           path: build/libs/*.jar
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        # A release is created once per version: on main whenever build.gradle.kts carries a version
+        # that has no release yet, or when a v* tag is pushed. Notes come from docs/releases/<tag>.md.
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" build/libs/*.jar --clobber
-          else
-            notes="docs/releases/$GITHUB_REF_NAME.md"
-            if [ -f "$notes" ]; then
-              gh release create "$GITHUB_REF_NAME" build/libs/*.jar --title "HIM $GITHUB_REF_NAME" --notes-file "$notes"
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' build.gradle.kts)
+          tag="v$version"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="$GITHUB_REF_NAME"; fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              gh release upload "$tag" build/libs/*.jar --clobber
             else
-              gh release create "$GITHUB_REF_NAME" build/libs/*.jar --title "HIM $GITHUB_REF_NAME" --generate-notes
+              echo "Release $tag already exists; nothing to publish."
             fi
+            exit 0
+          fi
+          notes="docs/releases/$tag.md"
+          if [ -f "$notes" ]; then
+            gh release create "$tag" build/libs/*.jar --target "$GITHUB_SHA" --title "HIM $tag" --notes-file "$notes"
+          else
+            gh release create "$tag" build/libs/*.jar --target "$GITHUB_SHA" --title "HIM $tag" --generate-notes
           fi

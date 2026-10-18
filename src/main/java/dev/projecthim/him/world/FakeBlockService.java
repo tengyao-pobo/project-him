@@ -179,6 +179,23 @@ public final class FakeBlockService {
         }
     }
 
+    /**
+     * Drops the record of a fake without touching the client, for a player who moved far enough away
+     * that their client unloaded the block (it receives the real state when it loads it again).
+     */
+    public void forget(Player player, String world, int x, int y, int z) {
+        Map<BlockKey, Fake> map = fakes.get(player.getUniqueId());
+        if (map != null) {
+            map.values().removeIf(f -> f.key.x() == x && f.key.y() == y && f.key.z() == z
+                    && world.equals(worldName(f.key.world())));
+        }
+    }
+
+    private static String worldName(UUID id) {
+        World w = Bukkit.getWorld(id);
+        return w == null ? null : w.getName();
+    }
+
     /** The real block changed: our record is meaningless now (the server sends the real state). */
     public void forget(Block block) {
         BlockKey key = BlockKey.of(block);

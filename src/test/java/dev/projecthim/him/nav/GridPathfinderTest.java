@@ -144,4 +144,18 @@ class GridPathfinderTest {
         assertFalse(r.reachesGoal());
         assertTrue(r.points().stream().allMatch(pt -> Math.abs(pt.x()) <= 60));
     }
+
+    @Test
+    void climbsLaddersOntoWalls() {
+        Grid g = new Grid();
+        g.wall(5, 4, 999);
+        GridPathfinder.Point top = p(5, 5, 0);
+        assertFalse(new GridPathfinder(g).find(p(0, 1, 0), top, 5000).reachesGoal(), "no way up without a ladder");
+        for (int y = 1; y <= 4; y++) {
+            g.set(4, y, 0, Cell.CLIMB);
+        }
+        GridPathfinder.Result r = new GridPathfinder(g).find(p(0, 1, 0), top, 5000);
+        assertTrue(r.reachesGoal(), "climbs the ladder and steps onto the wall");
+        assertTrue(r.points().stream().anyMatch(pt -> pt.x() == 4 && pt.y() == 4));
+    }
 }

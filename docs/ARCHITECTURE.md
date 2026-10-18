@@ -15,13 +15,15 @@
                │  EventManager ──► EventInstance（每個進行中的遭遇）                │
                │        │            ├ Apparition（Mannequin 本體 + 玩家反應）      │
                │        │            ├ HimCarrier + GridPathfinder + ChaseBrain     │
+               │        │            ├ SiegeWorks（圍困：破壞／墊高，經回滾日誌）  │
                │        │            └ FakeBlockService / WorldChangeJournal        │
+               │  SignService ──► SignReader / SignReplies（純邏輯，告示牌對話）    │
                │  MemoryService（快取 + 單一 IO 執行緒）── JsonMemoryRepository     │
                │  PerformanceGovernor（降級策略）                                   │
                └────────────────────────────────────────────────────────────────────┘
 ```
 
-**純邏輯與伺服器分離**：`director`（除 `DirectorService`）、`chase.ChaseBrain`、`nav.GridPathfinder`、`memory`（除 `MemoryService` 的排程）不碰任何伺服器狀態，可在 JUnit 中完整測試。所有版本相關的 API 使用集中在 `entity`、`platform`、`sense`、`world`。
+**純邏輯與伺服器分離**：`director`（除 `DirectorService`）、`chase.ChaseBrain`、`chase.HuntGear`、`nav.GridPathfinder`、`dialogue.SignReader`／`SignReplies`、`memory`（除 `MemoryService` 的排程）不碰任何伺服器狀態，可在 JUnit 中完整測試。所有版本相關的 API 使用集中在 `entity`、`platform`、`sense`、`world`。
 
 **執行緒模型**：所有遊戲狀態只在伺服器主執行緒存取。檔案 IO 在單一 `HIM-memory-io` 執行緒；要存檔的物件先在主執行緒序列化成 JSON 字串再交給 IO 執行緒，因此 IO 執行緒永遠不會看到可變物件；單一執行緒也保證了「刪除檔案 → 重新載入」等操作的順序。
 
@@ -60,6 +62,17 @@ Paper 26.3 提供 `Mannequin`（可設定 `ResolvableProfile` 皮膚的類玩家
 - 每個實例都有硬性時間上限。
 - 實體登錄確保所有身影可追蹤；區塊載入時清除帶標記但未登錄的殘留。
 - 設定檔錯誤一次列出全部，重新載入失敗保留舊設定；首次啟動若設定錯誤，插件保持休眠，修正後 `/him reload` 即可啟動。
+
+### 7. 追殺漏洞（v1.1.0）
+每一種「讓他到不了」的方法都由 `ChaseBrain` 的狀態處理，而不是讓 HIM 作弊：
+- **SIEGE**：靠近、最近看得到、但路徑到不了（`lastPlanReachedGoal` 為假，或距離近卻沒有進展）持續 1.5 秒 → 圍困。實際的破壞／墊高在 `SiegeWorks`，一次一個動作、玩家看得到裂痕、每場有上限，全部經過 `EntityChangeBlockEvent` 與回滾日誌。
+- **近距離感知**：6 格內、玩家不在真正室內時，不需要視線也算「看得到」。1×1 坑的漏洞是實測時發現的。
+- **AIRBORNE / LANDING**：鞘翅飛行時他不追（他不會飛），隱身並記錄飛行時間；落地時控制器把他放在玩家看不到的附近。累計飛行時間而非單次，避免「落地再起飛」重置。
+- **傳送跟隨**：`EventManager.participantLost` 讓實例可以「保留」參與者（`retains`），追殺在傳送後不結束，數秒後在新位置（必要時是另一個世界的新本體）繼續；跨世界不移動實體，而是在目標世界重新生成本體，避免實體跨世界的副作用。
+- 刻意保留的公平解法：真正的室內（屋頂＋燈光）、長時間飛行、多次傳送、地獄門、擊退、時限。
+
+### 8. 告示牌對話
+回覆不修改世界：以 `FakeBlockService.showSign` 只送給寫字的人，紀錄存在玩家記憶（`SignDialogue`）中，玩家回到附近時重新送出，因此跨重啟仍在。告示牌被改寫或打掉（文字雜湊不同）即結束這段對話。
 
 ## 擴充新事件
 

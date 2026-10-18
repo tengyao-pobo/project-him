@@ -3,6 +3,7 @@ package dev.projecthim.him.entity;
 import dev.projecthim.him.platform.EntityTags;
 import dev.projecthim.him.platform.SkinService;
 import dev.projecthim.him.util.HimLog;
+import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -39,15 +40,25 @@ public final class EntityRegistry {
         this.skin = skin;
     }
 
+    /** HIM's own configured skin. */
+    public ResolvableProfile skinProfile() {
+        return skin.profile();
+    }
+
     /**
      * Spawns a body. Returns null if the spawn was refused (another plugin cancelled it, or the
      * chunk is not loaded) so callers can simply skip the encounter.
      */
     public HimBody spawnBody(Location at) {
+        return spawnBody(at, skin.profile());
+    }
+
+    /** Spawns a body wearing the given profile instead of HIM's own skin. */
+    public HimBody spawnBody(Location at, ResolvableProfile profile) {
         if (!at.getWorld().isChunkLoaded(at.getBlockX() >> 4, at.getBlockZ() >> 4)) {
             return null;
         }
-        HimBody body = HimBody.spawn(plugin, tags, skin, at);
+        HimBody body = HimBody.spawn(plugin, tags, profile, at);
         if (!body.valid()) {
             log.debug(() -> "body spawn was cancelled at " + at.toVector());
             body.remove();

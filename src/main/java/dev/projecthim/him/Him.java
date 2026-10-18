@@ -57,6 +57,7 @@ public final class Him {
     private final SessionManager sessions;
     private final EventManager events;
     private final DirectorService director;
+    private final dev.projecthim.him.dialogue.SignService signs;
 
     private BukkitTask task;
     private long tick;
@@ -80,6 +81,7 @@ public final class Him {
         this.performance = new PerformanceGovernor(config.performance());
         this.sessions = new SessionManager(this);
         this.events = new EventManager(this);
+        this.signs = new dev.projecthim.him.dialogue.SignService(this);
         List<HorrorEvent> catalog = EventCatalog.create();
         List<EventSpec> specs = new ArrayList<>();
         for (HorrorEvent e : catalog) {
@@ -173,6 +175,9 @@ public final class Him {
         events.tick(tick);
         if (tick % 5 == 0) {
             fakes.tick(tick);
+        }
+        if (tick % 40 == 7 && config.enabled() && !paused) {
+            signs.tick(tick);
         }
         if (tick % 200 == 0) {
             journal.tick(clock.now());
@@ -289,6 +294,10 @@ public final class Him {
 
     public EventManager events() {
         return events;
+    }
+
+    public dev.projecthim.him.dialogue.SignService signs() {
+        return signs;
     }
 
     public DirectorService director() {

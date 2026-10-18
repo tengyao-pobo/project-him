@@ -38,6 +38,7 @@ public final class PlayerMemory {
     private LinkedHashMap<String, Long> lastEventAt = new LinkedHashMap<>();
     /** Set when the player left during an encounter. Used for a memory-linked event on return. */
     private Landmark pendingReturn;
+    private SignDialogue dialogue = new SignDialogue();
 
     public PlayerMemory() {
     }
@@ -77,6 +78,10 @@ public final class PlayerMemory {
         if (lastName == null) {
             lastName = "";
         }
+        if (dialogue == null) {
+            dialogue = new SignDialogue();
+        }
+        dialogue.sanitize();
         obsession = Double.isFinite(obsession) ? MathUtil.clamp(obsession, 0, 1) : 0.05;
         if (stageOverride < -1 || stageOverride > 4) {
             stageOverride = -1;
@@ -225,7 +230,11 @@ public final class PlayerMemory {
         return expectations;
     }
 
-    public Landmark pendingReturn() {
+    public SignDialogue dialogue() {
+        return dialogue;
+    }
+
+        public Landmark pendingReturn() {
         return pendingReturn;
     }
 

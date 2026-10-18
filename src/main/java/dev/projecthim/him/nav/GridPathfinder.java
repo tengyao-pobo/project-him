@@ -14,8 +14,9 @@ import org.bukkit.World;
  * A* over the block grid for a player-sized body (1 wide, 2 tall).
  *
  * <p>Moves: 8 horizontal directions (diagonals only without cutting corners), stepping up one
- * block, dropping up to three blocks, swimming in water (slowly, also up and down), and walking
- * through wooden doors and fence gates (the hunt opens them). Lava, fire, cactus, magma, powder
+ * block, dropping up to three blocks, swimming in water (slowly, also up and down), climbing
+ * ladders, vines and scaffolding, and walking through wooden doors and fence gates (the hunt opens
+ * them). Lava, fire, cactus, magma, powder
  * snow, berry bushes and cobwebs are avoided. Unloaded chunks are walls, so a search never loads a
  * chunk. Each search is bounded by a node budget; if the goal cannot be reached within it, the path
  * to the explored node closest to the goal is returned, like vanilla navigation does.
@@ -40,6 +41,8 @@ public final class GridPathfinder {
         WATER,
         /** Wooden door or fence gate: walked through (the hunt opens it). */
         DOOR,
+        /** Ladder, vine, scaffolding: occupiable and climbable up and down. */
+        CLIMB,
         /** Must never be entered or stood on (lava, fire, cactus, ...). */
         HAZARD,
         /** Not loaded: treated as a wall so a search never loads chunks. */
@@ -93,6 +96,10 @@ public final class GridPathfinder {
             return Cell.HAZARD;
         }
         String n = m.name();
+        if (m == Material.LADDER || m == Material.VINE || m == Material.SCAFFOLDING || n.startsWith("TWISTING_VINES")
+                || n.startsWith("WEEPING_VINES") || n.startsWith("CAVE_VINES")) {
+            return Cell.CLIMB;
+        }
         if (n.endsWith("_DOOR") && m != Material.IRON_DOOR || n.endsWith("_FENCE_GATE")) {
             return Cell.DOOR;
         }
@@ -151,7 +158,11 @@ public final class GridPathfinder {
     /** A body part can occupy this block. */
     private boolean passable(int x, int y, int z) {
         Cell c = cell(x, y, z);
-        return c == Cell.AIR || c == Cell.PASSABLE || c == Cell.WATER || c == Cell.DOOR;
+        return c == Cell.AIR || c == Cell.PASSABLE || c == Cell.WATER || c == Cell.DOOR || c == Cell.CLIMB;
+    }
+
+    private boolean climbable(int x, int y, int z) {
+        return cell(x, y, z) == Cell.CLIMB;
     }
 
     private boolean water(int x, int y, int z) {
@@ -168,7 +179,7 @@ public final class GridPathfinder {
         if (!passable(x, y, z) || !passable(x, y + 1, z)) {
             return false;
         }
-        return support(x, y - 1, z) || water(x, y, z);
+        return support(x, y - 1, z) || water(x, y, z) || climbable(x, y, z);
     }
 
     private static double heuristic(int x, int y, int z, Point goal) {
@@ -260,6 +271,15 @@ public final class GridPathfinder {
                         break;
                     }
                 }
+            }
+        }
+        if (climbable(x, y, z) || climbable(x, y - 1, z)) {
+            // Up a ladder (onto its top too) and back down.
+            if (passable(x, y + 1, z) && passable(x, y + 2, z) && (climbable(x, y, z) || climbable(x, y + 1, z))) {
+                push(n, new Point(x, y + 1, z), 1.5, goal, open, best);
+            }
+            if (climbable(x, y - 1, z)) {
+                push(n, new Point(x, y - 1, z), 1.2, goal, open, best);
             }
         }
         if (inWater) {

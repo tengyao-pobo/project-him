@@ -103,6 +103,10 @@ public final class DirectorService {
         if (!him.sessions().eligible(player) || him.events().isLocked(player.getUniqueId())) {
             return;
         }
+        if (him.clock().now() < s.memory().dialogue().quietUntil()) {
+            // He agreed to leave them alone for a while (sign dialogue).
+            return;
+        }
         PlayerContext ctx = s.context();
         if (ctx == null) {
             return;

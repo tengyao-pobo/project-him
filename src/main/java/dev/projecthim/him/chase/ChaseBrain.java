@@ -28,14 +28,27 @@ public final class ChaseBrain {
         FAKE_RETREAT,
         /** Briefly stunned after being hit. */
         STAGGER,
+        /**
+         * The player is close but cannot be reached (pillar, sealed hole). He stays, stares, and
+         * works his way to them: breaking blocks in the way or building up next to them.
+         */
+        SIEGE,
+        /**
+         * The player took to the air (elytra). He does not fly: hidden, he keeps track of them and is
+         * already there when they land. Staying airborne long enough is a real escape.
+         */
+        AIRBORNE,
+        /** One tick only: the player just landed; the controller places him near the landing spot. */
+        LANDING,
         ENDED
     }
 
     public enum EndReason {
-        CAUGHT, OUTRAN, LOST_SIGHT, SHELTERED, REPELLED, TIMEOUT, STUCK, TARGET_GONE, ABORTED;
+        CAUGHT, OUTRAN, LOST_SIGHT, SHELTERED, REPELLED, TIMEOUT, FLEW, TELEPORTED, STUCK, TARGET_GONE, ABORTED;
 
         public boolean playerWon() {
-            return this == OUTRAN || this == LOST_SIGHT || this == SHELTERED || this == REPELLED || this == TIMEOUT;
+            return this == OUTRAN || this == LOST_SIGHT || this == SHELTERED || this == REPELLED || this == TIMEOUT
+                    || this == FLEW || this == TELEPORTED;
         }
     }
 
@@ -45,11 +58,14 @@ public final class ChaseBrain {
      * @param targetVelocity  in blocks per tick
      * @param targetSeesHim   whether the target could see HIM's (carrier) position right now
      * @param progressing     whether the carrier has made path progress recently
+     * @param reachable       whether the latest path plan actually reaches the player
      * @param hitsTaken       total hits the player has landed on HIM during this hunt
+     * @param targetFlying    whether the player is gliding with an elytra (or otherwise flying)
      */
     public record Inputs(long tick, Vec him, Vec target, Vec targetVelocity, boolean himSeesTarget,
                          boolean targetSeesHim, boolean targetInWater, boolean targetSheltered,
-                         boolean progressing, int hitsTaken, boolean targetDead, boolean targetGone) {
+                         boolean progressing, boolean reachable, int hitsTaken, boolean targetDead,
+                         boolean targetGone, boolean targetFlying) {
     }
 
     /**
@@ -57,12 +73,13 @@ public final class ChaseBrain {
      *
      * @param speed       blocks per second, 0 means stand still
      * @param reposition  the controller may move the carrier to a hidden spot near the destination
+     * @param breach      the controller may break or place blocks to get to the player (siege)
      */
     public record Command(Mode mode, Vec destination, double speed, boolean bodyVisible, boolean attackAllowed,
-                          boolean faceTarget, boolean reposition, EndReason end) {
+                          boolean faceTarget, boolean reposition, EndReason end, boolean breach) {
 
         static Command ended(EndReason reason) {
-            return new Command(Mode.ENDED, null, 0, true, false, true, false, reason);
+            return new Command(Mode.ENDED, null, 0, true, false, true, false, reason, false);
         }
     }
 
@@ -83,6 +100,13 @@ public final class ChaseBrain {
     private int repositionsUsed;
     private long stuckSince = -1;
     private long farSince = -1;
+    private long unreachableSince = -1;
+    private long shelteredSince = -1;
+    private int reachableTicks;
+    private long flyingSince = -1;
+    private long groundedSince = -1;
+    private int airborneTicks;
+    private int flightEscapeTicks = 600;
     private EndReason endReason;
 
     /**
@@ -94,6 +118,11 @@ public final class ChaseBrain {
         this.random = random;
         this.speedScale = speedScale;
         this.mode = startRevealed ? Mode.REVEAL : Mode.APPROACH;
+    }
+
+    /** How long, in total, the player may stay in the air during this hunt before it counts as an escape. */
+    public void setFlightEscapeTicks(int ticks) {
+        this.flightEscapeTicks = ticks;
     }
 
     public Mode mode() {
@@ -110,6 +139,20 @@ public final class ChaseBrain {
 
     public Vec lastSeenPosition() {
         return lastSeenPos;
+    }
+
+    /**
+     * The player teleported and he followed: he starts over near them, pursuing, without the
+     * distance, sight or stuck timers from before the jump.
+     */
+    public void onFollowed(Inputs in) {
+        enter(Mode.PURSUE, in.tick());
+        lastSeenTick = in.tick();
+        lastSeenPos = in.target();
+        farSince = -1;
+        stuckSince = -1;
+        unreachableSince = -1;
+        shelteredSince = -1;
     }
 
     /** Called by the controller when it actually performed a reposition. */
@@ -151,6 +194,10 @@ public final class ChaseBrain {
             lastSeenPos = in.target();
             lastSeenVelocity = in.targetVelocity();
         }
+        Command flight = flight(in, tick);
+        if (flight != null) {
+            return flight;
+        }
         long sinceSeen = tick - lastSeenTick;
         double distance = in.him().distance(in.target());
 
@@ -164,8 +211,29 @@ public final class ChaseBrain {
         } else {
             farSince = -1;
         }
-        if (in.targetSheltered() && sinceSeen > 100 && mode != Mode.FAKE_RETREAT) {
+        // A real shelter (lit, roofed) wins: either the player broke his line of sight inside it, or he
+        // has been waiting outside it for a while. He never breaks into a proper shelter.
+        if (in.targetSheltered()) {
+            shelteredSince = shelteredSince < 0 ? tick : shelteredSince;
+        } else {
+            shelteredSince = -1;
+        }
+        boolean longSiege = mode == Mode.SIEGE && shelteredSince >= 0 && tick - shelteredSince > 200;
+        if (in.targetSheltered() && (sinceSeen > 100 || longSiege) && mode != Mode.FAKE_RETREAT) {
             return end(EndReason.SHELTERED);
+        }
+        // Close, recently seen, but no path reaches them: lay siege instead of running in circles.
+        double horizontal = in.him().horizontalDistance(in.target());
+        boolean chasing = mode == Mode.PURSUE || mode == Mode.BURST || mode == Mode.SEARCH;
+        if (chasing && !in.reachable() && horizontal <= 7 && sinceSeen < 100) {
+            if (unreachableSince < 0) {
+                unreachableSince = tick;
+            } else if (tick - unreachableSince >= 30) {
+                enter(Mode.SIEGE, tick);
+                reachableTicks = 0;
+            }
+        } else if (mode != Mode.SIEGE) {
+            unreachableSince = -1;
         }
         if (in.hitsTaken() > lastHits) {
             lastHits = in.hitsTaken();
@@ -213,7 +281,7 @@ public final class ChaseBrain {
                 }
                 Vec away = in.him().subtract(in.target()).horizontal().normalize();
                 yield new Command(Mode.STAGGER, in.him().add(away.multiply(2)), settings.walkSpeed() * 0.6, true, false,
-                        true, false, null);
+                        true, false, null, false);
             }
             case PURSUE -> pursue(in, tick, distance, sinceSeen, reposition);
             case BURST -> {
@@ -239,8 +307,58 @@ public final class ChaseBrain {
                 yield move(Mode.SEARCH, dest, settings.walkSpeed() * 1.1, true, false, reposition);
             }
             case FAKE_RETREAT -> fakeRetreat(in, tick, distance);
+            case SIEGE -> {
+                reachableTicks = in.reachable() ? reachableTicks + 1 : 0;
+                if (reachableTicks >= 10 || horizontal > 12) {
+                    // A way in opened up, or they slipped away: back to the chase.
+                    unreachableSince = -1;
+                    enter(Mode.PURSUE, tick);
+                    yield pursue(in, tick, distance, sinceSeen, false);
+                }
+                yield new Command(Mode.SIEGE, in.target(), settings.walkSpeed() * speedScale, true,
+                        distance <= settings.attackRange(), true, false, null, true);
+            }
+            case AIRBORNE, LANDING -> stand(in, false);
             case ENDED -> Command.ended(endReason);
         };
+    }
+
+    /**
+     * Elytra flight. Short hops do not count; sustained flight puts him into hiding until the player
+     * lands, and flight time adds up over the whole hunt, so landing and taking off again does not
+     * reset it.
+     */
+    private Command flight(Inputs in, long tick) {
+        if (in.targetFlying()) {
+            groundedSince = -1;
+            flyingSince = flyingSince < 0 ? tick : flyingSince;
+            if (mode != Mode.AIRBORNE && tick - flyingSince >= 10) {
+                enter(Mode.AIRBORNE, tick);
+                farSince = -1;
+                unreachableSince = -1;
+                stuckSince = -1;
+            }
+        } else if (mode == Mode.AIRBORNE) {
+            groundedSince = groundedSince < 0 ? tick : groundedSince;
+        } else {
+            flyingSince = -1;
+        }
+        if (mode != Mode.AIRBORNE) {
+            return null;
+        }
+        if (in.targetFlying() && ++airborneTicks > flightEscapeTicks) {
+            return end(EndReason.FLEW);
+        }
+        // He always knows where they are; losing sight of someone in the sky is not an escape.
+        lastSeenTick = tick;
+        lastSeenPos = in.target();
+        if (!in.targetFlying() && tick - groundedSince >= 20) {
+            flyingSince = -1;
+            groundedSince = -1;
+            enter(Mode.PURSUE, tick);
+            return new Command(Mode.LANDING, in.target(), 0, false, false, true, false, null, false);
+        }
+        return new Command(Mode.AIRBORNE, in.him(), 0, false, false, true, false, null, false);
     }
 
     private Command pursue(Inputs in, long tick, double distance, long sinceSeen, boolean reposition) {
@@ -270,7 +388,7 @@ public final class ChaseBrain {
             // Visibly turn and walk away.
             Vec away = in.him().subtract(in.target()).horizontal().normalize();
             return new Command(Mode.FAKE_RETREAT, in.him().add(away.multiply(10)), settings.walkSpeed(), true, false,
-                    false, false, null);
+                    false, false, null, false);
         }
         if (retreatIntercept == null) {
             // Where the player will be in ~3 seconds if they keep going.
@@ -286,15 +404,15 @@ public final class ChaseBrain {
         }
         // Hidden: the body is gone while the carrier legitimately walks to the intercept point.
         Vec dest = arrived ? in.him() : retreatIntercept;
-        return new Command(Mode.FAKE_RETREAT, dest, arrived ? 0 : settings.runSpeed(), false, false, false, false, null);
+        return new Command(Mode.FAKE_RETREAT, dest, arrived ? 0 : settings.runSpeed(), false, false, false, false, null, false);
     }
 
     private Command stand(Inputs in, boolean visible) {
-        return new Command(mode, in.him(), 0, visible, false, true, false, null);
+        return new Command(mode, in.him(), 0, visible, false, true, false, null, false);
     }
 
     private Command move(Mode m, Vec dest, double speed, boolean visible, boolean attack, boolean reposition) {
-        return new Command(m, dest, speed * speedScale, visible, attack, true, reposition, null);
+        return new Command(m, dest, speed * speedScale, visible, attack, true, reposition, null, false);
     }
 
     private Command end(EndReason reason) {

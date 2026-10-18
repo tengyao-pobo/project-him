@@ -67,7 +67,16 @@ public abstract class EventInstance {
     }
 
     public enum LossReason {
-        QUIT, DEATH, WORLD_CHANGE, TELEPORT
+        QUIT, DEATH, WORLD_CHANGE,
+        /** Teleported far away by a command or plugin (/tp, /home, /spawn, /tpa...). */
+        TELEPORT,
+        /** Went through a nether or end portal, or an end gateway. */
+        PORTAL
+    }
+
+    /** Whether the instance still follows a participant it was just told it lost (see {@link #onParticipantLost}). */
+    protected boolean retains(UUID player) {
+        return false;
     }
 
     protected final void finish(Outcome outcome) {

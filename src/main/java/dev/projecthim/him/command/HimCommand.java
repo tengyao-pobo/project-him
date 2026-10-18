@@ -394,6 +394,10 @@ public final class HimCommand implements BasicCommand {
         var chase = m.chase();
         line(s, "追殺", chase.hunts() + " 次：逃脫 " + chase.escapes() + "，被抓 " + chase.caught() + "，擊退 "
                 + chase.repelled() + (chase.favouriteEscape() != null ? "，慣用逃法 " + chase.favouriteEscape() : ""));
+        var d = m.dialogue();
+        line(s, "告示牌", String.format(Locale.ROOT, "讀過 %d 塊，挑釁 %d，請求 %d（答應 %d），態度 %+.2f，待回覆 %d%s",
+                d.signsRead(), d.provocations(), d.pleas(), d.pleasHonoured(), d.disposition(), d.pending().size(),
+                now < d.quietUntil() ? "，平靜中（剩 " + formatDuration(Duration.ofMillis(d.quietUntil() - now)) + "）" : ""));
         Player online = Bukkit.getPlayer(m.id());
         String world = online != null ? online.getWorld().getName() : null;
         if (world != null) {

@@ -38,6 +38,7 @@ public final class EventCatalog {
                 new LeaflessTreeEvent(),
                 new TunnelEvent(),
                 new DoorLeftOpenEvent(),
+                new FalseFriendEvent(),
                 // Hunt.
                 new HuntEvent(),
                 // Administrator only.

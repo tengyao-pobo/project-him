@@ -223,10 +223,19 @@ public final class EventManager {
             him.log().error("Event " + instance.context().instanceId() + " failed handling a lost participant", e);
             instance.finish(Outcome.INTERRUPTED);
         }
-        locks.remove(player);
         if (instance.finished()) {
+            locks.remove(player);
             complete(instance);
+        } else if (!instance.retains(player)) {
+            locks.remove(player);
         }
+    }
+
+    /** Whether the player is being hunted right now. */
+    public boolean isHunted(UUID player) {
+        EventInstance instance = locks.get(player);
+        return instance != null && !instance.finished() && instance.context().spec().intent() == dev.projecthim.him.director.Intent.HUNT
+                && instance.context().target().getUniqueId().equals(player);
     }
 
     public void bodyHit(HimBody body, Player attacker) {

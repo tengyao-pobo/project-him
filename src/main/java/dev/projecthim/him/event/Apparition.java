@@ -6,6 +6,7 @@ import dev.projecthim.him.memory.Outcome;
 import dev.projecthim.him.sense.Ground;
 import dev.projecthim.him.sense.Sight;
 import dev.projecthim.him.util.MathUtil;
+import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -115,6 +116,12 @@ public final class Apparition {
      */
     public static Optional<Apparition> spawn(Him him, Location feet, Collection<? extends Player> viewers,
                                              boolean concealed) {
+        return spawn(him, feet, viewers, concealed, null);
+    }
+
+    /** Like the other overloads, wearing {@code profile} (null means HIM's own skin). */
+    public static Optional<Apparition> spawn(Him him, Location feet, Collection<? extends Player> viewers,
+                                             boolean concealed, ResolvableProfile profile) {
         if (!him.canSpawnApparition()) {
             return Optional.empty();
         }
@@ -131,7 +138,7 @@ public final class Apparition {
         if (nearest != null) {
             at.setYaw(MathUtil.yawTowards(at.getX(), at.getZ(), nearest.getX(), nearest.getZ()));
         }
-        HimBody body = him.entities().spawnBody(at);
+        HimBody body = profile == null ? him.entities().spawnBody(at) : him.entities().spawnBody(at, profile);
         if (body == null) {
             return Optional.empty();
         }

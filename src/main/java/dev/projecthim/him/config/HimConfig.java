@@ -27,6 +27,8 @@ public record HimConfig(
         Memory memory,
         Performance performance,
         Messages messages,
+        Impersonation impersonation,
+        Signs signs,
         List<String> warnings) {
 
     public static final int CURRENT_VERSION = 1;
@@ -61,7 +63,71 @@ public record HimConfig(
     public record Apparitions(int maxActive, String skinValue, String skinSignature, double maxDistance) {
     }
 
-    public record Chase(boolean enabled, int maxConcurrent, ChaseSettings settings, String deathMessage) {
+    public record Chase(boolean enabled, int maxConcurrent, ChaseSettings settings, String deathMessage, Siege siege,
+                        Gear gear, Flight flight, Teleport teleport) {
+    }
+
+    /**
+     * Teleports (by command or plugin) during a hunt.
+     *
+     * @param follows        how many times per hunt he follows the player to where they teleported
+     * @param blockCommands  whether hunted players cannot teleport by command at all
+     */
+    public record Teleport(int follows, boolean blockCommands) {
+    }
+
+    /**
+     * Elytra flight during a hunt.
+     *
+     * @param escapeTicks     total time in the air (per hunt) after which the player has escaped
+     * @param watchFromBelow  whether he may be seen once on the ground ahead, looking up
+     */
+    public record Flight(int escapeTicks, boolean watchFromBelow) {
+    }
+
+    /**
+     * What HIM may do when a hunted player is close but unreachable (pillar, sealed hole).
+     *
+     * @param buildMaterial material name; validated as a known material, checked for solidity at runtime
+     */
+    public record Siege(boolean breakBlocks, boolean buildUp, int maxBlocks, double maxHardness, String buildMaterial,
+                        int ticksPerBlock) {
+    }
+
+    public enum GearMode {
+        NONE, FIXED, ADAPTIVE
+    }
+
+    /**
+     * Equipment HIM carries during hunts.
+     *
+     * @param fixed slot name (main-hand, off-hand, helmet, chestplate, leggings, boots) to material name
+     */
+    public record Gear(GearMode mode, Map<String, String> fixed, boolean weaponAffectsDamage,
+                       boolean armorAffectsRepel) {
+    }
+
+    /**
+     * Impersonation of other players.
+     *
+     * @param minDistanceFromReal the real player must be at least this far from the target (or elsewhere)
+     */
+    public record Impersonation(boolean enabled, boolean showName, double minDistanceFromReal) {
+    }
+
+    /**
+     * Talking to HIM through signs.
+     *
+     * @param minStage           players below this stage get no answers yet
+     * @param delayMinMinutes    shortest wait before the answer appears
+     * @param delayMaxMinutes    longest wait before the answer appears
+     * @param unaddressedChance  chance he reacts to a sign that is not meant for him
+     * @param quietMinMinutes    shortest quiet he may grant when asked to leave
+     * @param quietMaxMinutes    longest quiet he may grant when asked to leave
+     * @param visibleDays        how long the writer keeps seeing his answer on the sign
+     */
+    public record Signs(boolean enabled, int minStage, double delayMinMinutes, double delayMaxMinutes,
+                        double unaddressedChance, double quietMinMinutes, double quietMaxMinutes, double visibleDays) {
     }
 
     public record WorldEdits(boolean fakeBlocks, boolean realChanges, boolean respectMobGriefing,
@@ -211,8 +277,59 @@ public record HimConfig(
         if (cs.runSpeed() > 5.6) {
             r.warn("chase.speed.run", "奔跑速度高於玩家衝刺速度（約 5.6），玩家幾乎不可能逃脫");
         }
+        boolean editsMaster = r.bool("world-modification.enabled", true);
+        String buildMaterial = r.string("chase.siege.build-material", "NETHERRACK").trim();
+        if (org.bukkit.Material.matchMaterial(buildMaterial) == null) {
+            r.error("chase.siege.build-material", "未知的方塊「" + buildMaterial + "」");
+        }
+        Siege siege = new Siege(
+                editsMaster && r.bool("chase.siege.break-blocks", true),
+                editsMaster && r.bool("chase.siege.build-up", true),
+                r.integer("chase.siege.max-blocks", 12, 0, 256),
+                r.number("chase.siege.max-hardness", 5.0, 0, 100),
+                buildMaterial,
+                r.integer("chase.siege.ticks-per-block", 20, 1, 400));
+        Map<String, String> fixedGear = new LinkedHashMap<>();
+        for (String slot : List.of("main-hand", "off-hand", "helmet", "chestplate", "leggings", "boots")) {
+            String item = r.string("chase.equipment.fixed." + slot, "").trim();
+            if (!item.isEmpty()) {
+                if (org.bukkit.Material.matchMaterial(item) == null) {
+                    r.error("chase.equipment.fixed." + slot, "未知的物品「" + item + "」");
+                } else {
+                    fixedGear.put(slot, item);
+                }
+            }
+        }
+        Gear gear = new Gear(
+                r.enumValue("chase.equipment.mode", GearMode.class, GearMode.ADAPTIVE),
+                Map.copyOf(fixedGear),
+                r.bool("chase.equipment.weapon-affects-damage", true),
+                r.bool("chase.equipment.armor-affects-repel", true));
         Chase chase = new Chase(r.bool("chase.enabled", true), r.integer("chase.max-concurrent", 1, 0, 16), cs,
-                r.string("chase.death-message", "{player} 再也沒有回來。"));
+                r.string("chase.death-message", "{player} 再也沒有回來。"), siege, gear,
+                new Flight((int) (r.number("chase.flight.escape-seconds", 30, 3, 600) * 20),
+                        r.bool("chase.flight.watch-from-below", true)),
+                new Teleport(r.integer("chase.teleport.follows", 2, 0, 20),
+                        r.bool("chase.teleport.block-commands", false)));
+        Impersonation impersonation = new Impersonation(
+                r.bool("impersonation.enabled", true),
+                r.bool("impersonation.show-name", true),
+                r.number("impersonation.min-distance-from-real", 48, 8, 1000));
+        Signs signs = new Signs(
+                r.bool("signs.enabled", true),
+                r.integer("signs.min-stage", 1, 0, 4),
+                r.number("signs.reply-delay-minutes.min", 2, 0.1, 1440),
+                r.number("signs.reply-delay-minutes.max", 12, 0.1, 1440),
+                r.number("signs.unaddressed-chance", 0.2, 0, 1),
+                r.number("signs.quiet-minutes.min", 20, 1, 1440),
+                r.number("signs.quiet-minutes.max", 60, 1, 1440),
+                r.number("signs.visible-days", 3, 0.01, 365));
+        if (signs.delayMaxMinutes() < signs.delayMinMinutes()) {
+            r.error("signs.reply-delay-minutes.max", "不可小於 min");
+        }
+        if (signs.quietMaxMinutes() < signs.quietMinMinutes()) {
+            r.error("signs.quiet-minutes.max", "不可小於 min");
+        }
 
         boolean editsEnabled = r.bool("world-modification.enabled", true);
         WorldEdits edits = new WorldEdits(
@@ -262,6 +379,7 @@ public record HimConfig(
             throw new ConfigException(r.errors(), r.warnings());
         }
         return new HimConfig(enabled, logLevel, worlds, players, director, budget, groupRadius, apparitions, chase,
-                edits, mp, memory, perf, messages, List.copyOf(r.warnings()));
+                edits, mp, memory, perf, messages, impersonation, signs,
+                List.copyOf(r.warnings()));
     }
 }

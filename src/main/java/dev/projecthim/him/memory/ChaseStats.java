@@ -7,7 +7,7 @@ import java.util.Map;
 public final class ChaseStats {
 
     public enum EscapeMethod {
-        OUTRAN, BROKE_SIGHT, WATER, SHELTER, FOUGHT, LOGGED_OUT, TIMEOUT
+        OUTRAN, BROKE_SIGHT, WATER, SHELTER, FOUGHT, LOGGED_OUT, TIMEOUT, FLEW, TELEPORT
     }
 
     private int hunts;

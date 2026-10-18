@@ -51,3 +51,9 @@ permissions:
   him.exempt:
     description: 永遠不會成為 HIM 的目標
     default: false
+  him.bypass-teleport-block:
+    description: 即使開啟 chase.teleport.block-commands，被追殺時仍可用指令傳送
+    default: op
+  him.no-impersonate:
+    description: HIM 永遠不會偽裝成這位玩家
+    default: false

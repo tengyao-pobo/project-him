@@ -2,6 +2,7 @@ package dev.projecthim.him.event.impl;
 
 import dev.projecthim.him.chase.ChaseBrain;
 import dev.projecthim.him.chase.ChaseSettings;
+import dev.projecthim.him.chase.HuntGear;
 import dev.projecthim.him.director.EncounterMode;
 import dev.projecthim.him.director.EventSpec;
 import dev.projecthim.him.director.Intent;
@@ -18,6 +19,7 @@ import dev.projecthim.him.memory.Outcome;
 import dev.projecthim.him.memory.Personality.Trait;
 import dev.projecthim.him.memory.PlayerMemory;
 import dev.projecthim.him.platform.SoundCues;
+import dev.projecthim.him.sense.Ground;
 import dev.projecthim.him.sense.Sight;
 import dev.projecthim.him.sense.SpotFinder;
 import dev.projecthim.him.util.MathUtil;
@@ -25,6 +27,7 @@ import dev.projecthim.him.util.Vec;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,16 +40,20 @@ import org.bukkit.block.data.Openable;
 import org.bukkit.damage.DamageSource;
 import org.bukkit.damage.DamageType;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.util.Vector;
 
 /**
- * The hunt. A hidden carrier mob walks the real terrain with vanilla navigation, the visible body
- * follows it, and {@link ChaseBrain} decides what to do every tick. HIM adapts to the player's past:
- * players who escape through water meet a better swimmer, players who outrun him meet a slightly
- * faster one, players who hide get searched for longer.
+ * The hunt. A virtual carrier walks the real terrain along planned paths, the visible body follows
+ * it, and {@link ChaseBrain} decides what to do every tick. HIM adapts to the player's past: players
+ * who escape through water meet a better swimmer, players who outrun him meet a slightly faster one,
+ * players who hide get searched for longer, players who keep beating him meet a better armed HIM.
+ * Players who make themselves unreachable (pillars, sealed holes) are besieged ({@link SiegeWorks}).
  *
  * <p>Fairness rules: no teleporting while observed, at most a few hidden repositions, configurable
- * damage and lethality, a hard time limit, and several clear ways to escape.
+ * damage and lethality, a hard time limit, and several clear ways to escape, including a real,
+ * lit shelter, which he never breaks into.
  */
 final class HuntEvent implements HorrorEvent {
 
@@ -74,6 +81,8 @@ final class HuntEvent implements HorrorEvent {
     static final class Instance extends EventInstance {
         private static final int AFTERMATH_MAX = 70;
         private static final double SIGHT_RANGE = 48;
+        /** Within this distance he finds a player who is not truly sheltered, seen or not. */
+        private static final double SENSE_RANGE = 6;
 
         private ChaseSettings settings;
         private ChaseBrain brain;
@@ -81,6 +90,14 @@ final class HuntEvent implements HorrorEvent {
         private HimBody body;
         private List<Player> viewers;
         private boolean bodyShown;
+        /** Seen once from the air: standing on the ground ahead, looking up. */
+        private boolean watchingFromBelow;
+        private boolean watchedFromBelow;
+        private HuntGear.Loadout loadout = HuntGear.Loadout.NONE;
+        /** Following a teleported player: when he arrives, and when he gives up looking for a spot. */
+        private long arriveAt = -1;
+        private long followDeadline;
+        private int follows;
         private int hits;
         private long nextAttackAt;
         private Vec lastTargetPos;
@@ -95,6 +112,8 @@ final class HuntEvent implements HorrorEvent {
         private int unseenTicks;
         private ChaseBrain.Mode lastMode;
         private double waterFactor = 0.5;
+        private SiegeWorks siege;
+        private boolean targetSheltered;
 
         Instance(EventContext ctx) {
             super(ctx);
@@ -107,9 +126,9 @@ final class HuntEvent implements HorrorEvent {
             settings = adapt(ctx.him().config().chase().settings(), memory.chase());
             boolean revealed = ctx.subvert();
             SpotFinder spots = ctx.him().spots();
-            Optional<SpotFinder.Spot> spot = revealed
-                    ? spots.distant(p, 12, 20, false)
-                    : spots.hiddenOrBehind(p, 22, 34);
+            // Nowhere in sight (a pit, a tunnel): he comes from out of view either way.
+            Optional<SpotFinder.Spot> spot = (revealed ? spots.distant(p, 12, 20, false) : Optional.<SpotFinder.Spot>empty())
+                    .or(() -> spots.hiddenOrBehind(p, revealed ? 12 : 22, revealed ? 24 : 34));
             if (spot.isEmpty()) {
                 return false;
             }
@@ -127,11 +146,16 @@ final class HuntEvent implements HorrorEvent {
                 return false;
             }
             viewers = new ArrayList<>(ctx.mode() == EncounterMode.SHARED ? ctx.participants() : List.of(p));
+            equip(memory, p);
             showBody();
+            siege = new SiegeWorks(ctx.him(), ctx.him().config().chase().siege(), ctx.instanceId());
             // Players who keep escaping through water meet a better swimmer.
             waterFactor = memory.chase().favouriteEscape() == EscapeMethod.WATER ? 0.85 : 0.5;
             double aggression = ctx.him().memory().world().personality().get(Trait.AGGRESSION);
             brain = new ChaseBrain(settings, ctx.him().random(), revealed, 0.95 + 0.1 * aggression);
+            // Players who keep flying away get less time in the air before it counts.
+            int flight = ctx.him().config().chase().flight().escapeTicks();
+            brain.setFlightEscapeTicks(memory.chase().favouriteEscape() == EscapeMethod.FLEW ? flight * 3 / 2 : flight);
             if (learns()) {
                 memory.chase().recordStart(ctx.him().clock().now());
                 ctx.him().memory().world().countHunt();
@@ -142,6 +166,54 @@ final class HuntEvent implements HorrorEvent {
                     + " at " + at.toVector() + " speeds " + settings.walkSpeed() + "/" + settings.runSpeed() + "/"
                     + settings.burstSpeed());
             return true;
+        }
+
+        /** Dresses the body for the hunt and lets the gear shape damage and toughness. */
+        private void equip(PlayerMemory memory, Player p) {
+            var gearCfg = ctx.him().config().chase().gear();
+            loadout = switch (gearCfg.mode()) {
+                case NONE -> HuntGear.Loadout.NONE;
+                case FIXED -> fixedLoadout(gearCfg.fixed());
+                case ADAPTIVE -> HuntGear.adaptive(memory.chase(),
+                        ctx.session().context() != null && ctx.session().context().underground(), ctx.him().random());
+            };
+            dress();
+            double bonus = gearCfg.weaponAffectsDamage() ? HuntGear.damageBonus(loadout.mainHand()) : 0;
+            int armor = gearCfg.armorAffectsRepel() ? loadout.armorPieces() : 0;
+            if (bonus > 0 || armor > 0) {
+                ChaseSettings s = settings;
+                settings = new ChaseSettings(s.walkSpeed(), s.runSpeed(), s.burstSpeed(), s.burstTicks(),
+                        s.burstCooldownTicks(), s.attackRange(), s.attackDamage() + bonus, s.attackCooldownTicks(),
+                        s.lethal(), s.maxDurationTicks(), s.revealTicks(), s.loseSightTicks(), s.searchTicks(),
+                        s.escapeDistance(), s.hitsToRepel() + armor, s.fakeRetreatChance(), s.maxRepositions(),
+                        s.openDoors());
+            }
+            HuntGear.Loadout chosen = loadout;
+            ctx.him().log().debug(() -> "hunt gear for " + p.getName() + ": " + chosen);
+        }
+
+        private void dress() {
+            var eq = body.entity().getEquipment();
+            eq.setItem(EquipmentSlot.HAND, item(loadout.mainHand()), true);
+            eq.setItem(EquipmentSlot.OFF_HAND, item(loadout.offHand()), true);
+            eq.setItem(EquipmentSlot.HEAD, item(loadout.helmet()), true);
+            eq.setItem(EquipmentSlot.CHEST, item(loadout.chestplate()), true);
+            eq.setItem(EquipmentSlot.LEGS, item(loadout.leggings()), true);
+            eq.setItem(EquipmentSlot.FEET, item(loadout.boots()), true);
+        }
+
+        private static HuntGear.Loadout fixedLoadout(java.util.Map<String, String> fixed) {
+            return new HuntGear.Loadout(material(fixed.get("main-hand")), material(fixed.get("off-hand")),
+                    material(fixed.get("helmet")), material(fixed.get("chestplate")), material(fixed.get("leggings")),
+                    material(fixed.get("boots")));
+        }
+
+        private static org.bukkit.Material material(String name) {
+            return name == null ? null : org.bukkit.Material.matchMaterial(name);
+        }
+
+        private static ItemStack item(org.bukkit.Material m) {
+            return m == null || !m.isItem() ? null : new ItemStack(m);
         }
 
         /** Manual (administrator) hunts do not change the player's hunt statistics. */
@@ -199,6 +271,12 @@ final class HuntEvent implements HorrorEvent {
                 aftermath(tick);
                 return;
             }
+            if (arriveAt >= 0) {
+                if (tick >= arriveAt) {
+                    arrive(tick, p);
+                }
+                return;
+            }
             if (!carrier.valid() || !body.valid()) {
                 end(ChaseBrain.EndReason.ABORTED);
                 return;
@@ -216,11 +294,16 @@ final class HuntEvent implements HorrorEvent {
                     MathUtil.ema(targetVelocity.z(), rawVelocity.z(), 0.3));
             lastTargetPos = targetPos;
 
+            targetSheltered = p.getLocation().getBlock().getLightFromSky() <= 3
+                    && p.getWorld().getHighestBlockYAt(pl) > pl.getBlockY() + 1
+                    && p.getLocation().getBlock().getLightFromBlocks() >= 8;
             if ((tick & 1) == 0) {
                 Location himEye = carrierLoc.clone().add(0, 1.62, 0);
                 // He perceives the player within a limited range, like anyone would.
                 himSeesTarget = himEye.distanceSquared(p.getEyeLocation()) <= SIGHT_RANGE * SIGHT_RANGE
-                        && Sight.visibility(carrierLoc.getWorld(), himEye.toVector(), p.getEyeLocation().toVector()) >= 0.4;
+                        && Sight.visibility(carrierLoc.getWorld(), himEye.toVector(), p.getEyeLocation().toVector()) >= 0.4
+                        // Up close he hears them: a hole in the ground or a wall of dirt is no hiding place.
+                        || !targetSheltered && carrierLoc.distanceSquared(pl) <= SENSE_RANGE * SENSE_RANGE;
                 targetSeesHim = Sight.canSee(p, carrierLoc, Sight.PERIPHERAL_HALF_ANGLE);
             }
             carrierTrail.add(vec(carrierLoc));
@@ -229,21 +312,82 @@ final class HuntEvent implements HorrorEvent {
             }
             boolean progressing = carrierTrail.size() < 40
                     || carrierTrail.getFirst().distance(carrierTrail.getLast()) > 1.5;
-            boolean sheltered = p.getLocation().getBlock().getLightFromSky() <= 3
-                    && p.getWorld().getHighestBlockYAt(pl) > pl.getBlockY() + 1
-                    && p.getLocation().getBlock().getLightFromBlocks() >= 8;
+            // Close counts as reachable only while he still gets closer: a fence or a single block
+            // between them must not leave him standing there forever.
+            boolean reachable = carrier.lastPlanReachedGoal()
+                    || carrierLoc.distance(pl) <= settings.attackRange() + (progressing ? 1.0 : 0.0);
 
             ChaseBrain.Command cmd = brain.tick(new ChaseBrain.Inputs(tick, vec(carrierLoc), targetPos, targetVelocity,
-                    himSeesTarget, targetSeesHim, p.isInWater(), sheltered, progressing, hits, p.isDead(),
-                    !p.isOnline()));
+                    himSeesTarget, targetSeesHim, p.isInWater(), targetSheltered, progressing, reachable, hits,
+                    p.isDead(), !p.isOnline(), flying(p)));
             if (cmd.end() != null) {
                 end(cmd.end());
                 return;
             }
             execute(cmd, tick, p, carrierLoc);
+            if (tick % 100 == 0) {
+                Location c = carrierLoc;
+                ctx.him().log().debug(() -> String.format(Locale.ROOT,
+                        "hunt of %s: %s at %.1f,%.1f,%.1f dist %.1f reachable=%b sheltered=%b sees=%b shown=%b attack=%b siege=%d",
+                        p.getName(), cmd.mode(), c.getX(), c.getY(), c.getZ(), c.distance(pl), reachable,
+                        targetSheltered, himSeesTarget, bodyShown, cmd.attackAllowed(), siege.used()));
+            }
+        }
+
+        /**
+         * Arrives where the teleported player went: out of their view, a few seconds after them, in
+         * another world if need be (a new body there; entities do not travel between worlds cleanly).
+         */
+        private void arrive(long tick, Player p) {
+            if (!ctx.him().sessions().eligible(p)) {
+                end(ChaseBrain.EndReason.TELEPORTED);
+                return;
+            }
+            Optional<SpotFinder.Spot> spot = ctx.him().spots().hiddenOrBehind(p, 12, 24);
+            if (spot.isEmpty() || Sight.canSee(p, spot.get().feet(), Sight.PERIPHERAL_HALF_ANGLE)) {
+                if (tick >= followDeadline) {
+                    end(ChaseBrain.EndReason.TELEPORTED);
+                }
+                return;
+            }
+            Location at = spot.get().feet();
+            hideBody();
+            if (body.entity().getWorld() != at.getWorld()) {
+                ctx.him().entities().remove(body);
+                body = ctx.him().entities().spawnBody(at);
+                if (body == null) {
+                    end(ChaseBrain.EndReason.ABORTED);
+                    return;
+                }
+                dress();
+            } else {
+                body.moveTo(at);
+            }
+            carrier.teleport(at);
+            carrierTrail.clear();
+            lastTargetPos = vec(p.getLocation());
+            targetVelocity = Vec.ZERO;
+            arriveAt = -1;
+            brain.onFollowed(new ChaseBrain.Inputs(tick, vec(at), vec(p.getLocation()), Vec.ZERO, true, false,
+                    false, false, true, false, 0, false, false, false));
+            ctx.him().log().debug(() -> "hunt: followed " + p.getName() + " (" + follows + ") to " + at.toVector()
+                    + " in " + at.getWorld().getName());
+        }
+
+        private static boolean flying(Player p) {
+            return p.isGliding() || p.isFlying() && p.getGameMode() == org.bukkit.GameMode.SURVIVAL;
         }
 
         private void execute(ChaseBrain.Command cmd, long tick, Player p, Location carrierLoc) {
+            if (cmd.mode() == ChaseBrain.Mode.LANDING) {
+                land(p, carrierLoc);
+                carrierLoc = carrier.location();
+            } else if (cmd.mode() == ChaseBrain.Mode.AIRBORNE) {
+                watchFromBelow(tick, p, carrierLoc);
+                carrierLoc = carrier.location();
+            } else {
+                watchingFromBelow = false;
+            }
             if (cmd.reposition() && !targetSeesHim) {
                 reposition(p);
                 carrierLoc = carrier.location();
@@ -255,6 +399,10 @@ final class HuntEvent implements HorrorEvent {
                         cmd.destination().z());
                 carrier.navigate(dest, tick, cmd.mode() == ChaseBrain.Mode.SEARCH ? 20 : 8);
                 carrier.step();
+                if (cmd.breach() && !targetSheltered && siege.tick(tick, carrier, body, p, viewers)) {
+                    // The terrain changed: plan again from scratch.
+                    carrier.stop();
+                }
                 if (settings.openDoors()) {
                     openDoorsAhead(carrierLoc, tick);
                 }
@@ -263,12 +411,13 @@ final class HuntEvent implements HorrorEvent {
             }
             closeDoorsBehind(tick);
 
-            if (cmd.bodyVisible() && !bodyShown) {
-                // Reappear only where nobody is looking.
-                if (!targetSeesHim) {
+            boolean visible = cmd.bodyVisible() || watchingFromBelow;
+            if (visible && !bodyShown) {
+                // Reappear only where nobody is looking (far below a flying player: like anything loading in).
+                if (!targetSeesHim || watchingFromBelow) {
                     showBody();
                 }
-            } else if (!cmd.bodyVisible() && bodyShown) {
+            } else if (!visible && bodyShown) {
                 hideBody();
             }
 
@@ -319,6 +468,8 @@ final class HuntEvent implements HorrorEvent {
                         .withDamageLocation(from)
                         .build());
             }
+            double dealt = damage;
+            ctx.him().log().debug(() -> "hunt: hit " + p.getName() + " for " + dealt + ", health now " + p.getHealth());
             Vector push = p.getLocation().toVector().subtract(from.toVector()).setY(0);
             if (push.lengthSquared() > 1.0E-4) {
                 p.setVelocity(p.getVelocity().add(push.normalize().multiply(0.45).setY(0.28)));
@@ -338,6 +489,77 @@ final class HuntEvent implements HorrorEvent {
             body.moveTo(spot.get().feet());
             brain.onRepositioned();
             ctx.him().log().debug(() -> "hunt: hidden reposition for " + p.getName());
+        }
+
+        /**
+         * The player landed after flying. If they got away from him he is already near, out of view;
+         * the chase goes on from there. Not counted as one of the limited stuck repositions.
+         */
+        private void land(Player p, Location carrierLoc) {
+            watchingFromBelow = false;
+            if (carrierLoc.getWorld() == p.getWorld() && carrierLoc.distance(p.getLocation()) < 20) {
+                return;
+            }
+            Optional<SpotFinder.Spot> spot = ctx.him().spots().hiddenOrBehind(p, 10, 20);
+            if (spot.isEmpty() || Sight.canSee(p, spot.get().feet(), Sight.PERIPHERAL_HALF_ANGLE)) {
+                return;
+            }
+            hideBody();
+            carrier.teleport(spot.get().feet());
+            body.moveTo(spot.get().feet());
+            ctx.him().log().debug(() -> "hunt: " + p.getName() + " landed, he is already there");
+        }
+
+        /**
+         * Once per hunt, a little while into the flight: he stands on the ground far ahead of the player,
+         * off to the side and never where they are looking straight at, face turned up at them. At that
+         * distance he appears the way anything far away loads in. He is gone again once they have passed.
+         */
+        private void watchFromBelow(long tick, Player p, Location carrierLoc) {
+            if (watchingFromBelow) {
+                Location pl = p.getLocation();
+                Vector toHim = carrierLoc.toVector().subtract(pl.toVector()).setY(0);
+                // The server does not know a player's real velocity; use the tracked movement instead.
+                Vector heading = new Vector(targetVelocity.x(), 0, targetVelocity.z());
+                boolean passed = heading.lengthSquared() > 1.0E-4 && toHim.dot(heading) < 0 && toHim.length() > 24;
+                if (passed || toHim.length() > 96) {
+                    watchingFromBelow = false;
+                }
+                return;
+            }
+            if (watchedFromBelow || !ctx.him().config().chase().flight().watchFromBelow()
+                    || brain.mode() != ChaseBrain.Mode.AIRBORNE || ctx.him().random().nextDouble() > 0.05) {
+                return;
+            }
+            Vector v = new Vector(targetVelocity.x(), 0, targetVelocity.z());
+            if (v.lengthSquared() < 0.25) {
+                return;
+            }
+            Location pl = p.getLocation();
+            Vector side = new Vector(-v.getZ(), 0, v.getX()).normalize();
+            for (int attempt = 0; attempt < 6; attempt++) {
+                double ahead = 70 + ctx.him().random().nextDouble() * 40;
+                double off = (ctx.him().random().nextBoolean() ? 1 : -1) * (15 + ctx.him().random().nextDouble() * 20);
+                Vector at = pl.toVector().add(v.clone().normalize().multiply(ahead)).add(side.clone().multiply(off));
+                int x = at.getBlockX();
+                int z = at.getBlockZ();
+                if (!p.getWorld().isChunkLoaded(x >> 4, z >> 4)) {
+                    continue;
+                }
+                int y = p.getWorld().getHighestBlockYAt(x, z) + 1;
+                Optional<Location> ground = Ground.findStandable(p.getWorld(), x, y, z, 2, 4);
+                if (ground.isEmpty() || ground.get().getY() > pl.getY() - 6
+                        || ground.get().distance(pl) < 64 || Sight.canSee(p, ground.get(), Sight.FOCUS_HALF_ANGLE * 2)) {
+                    continue;
+                }
+                hideBody();
+                carrier.teleport(ground.get());
+                body.moveTo(ground.get());
+                watchingFromBelow = true;
+                watchedFromBelow = true;
+                ctx.him().log().debug(() -> "hunt: watching " + p.getName() + " fly over");
+                return;
+            }
         }
 
         private void openDoorsAhead(Location at, long tick) {
@@ -404,12 +626,14 @@ final class HuntEvent implements HorrorEvent {
                     addLandmark(new Landmark(Landmark.Kind.ATTACK_SITE, id, pl.getWorld().getName(), pl.getBlockX(),
                             pl.getBlockY(), pl.getBlockZ(), now));
                 }
-                case OUTRAN, LOST_SIGHT, SHELTERED, TIMEOUT -> {
+                case OUTRAN, LOST_SIGHT, SHELTERED, TIMEOUT, FLEW, TELEPORTED -> {
                     outcome = Outcome.ESCAPED;
                     EscapeMethod method = switch (reason) {
                         case OUTRAN -> EscapeMethod.OUTRAN;
                         case SHELTERED -> EscapeMethod.SHELTER;
                         case TIMEOUT -> EscapeMethod.TIMEOUT;
+                        case FLEW -> EscapeMethod.FLEW;
+                        case TELEPORTED -> EscapeMethod.TELEPORT;
                         default -> p.isInWater() ? EscapeMethod.WATER : EscapeMethod.BROKE_SIGHT;
                     };
                     if (memory != null) {
@@ -432,7 +656,7 @@ final class HuntEvent implements HorrorEvent {
             }
             setOutcome(id, outcome);
             ctx.him().log().debug(() -> "hunt of " + p.getName() + " ended: " + reason + " (" + hits + " hits taken, "
-                    + brain.repositionsUsed() + " repositions)");
+                    + brain.repositionsUsed() + " repositions, " + (siege == null ? 0 : siege.used()) + " siege blocks)");
             if (reason.playerWon() && bodyShown && p.isOnline() && body.valid()) {
                 // He does not just blink out in front of them: he stands and watches, then is gone.
                 carrier.stop();
@@ -471,6 +695,11 @@ final class HuntEvent implements HorrorEvent {
         }
 
         @Override
+        protected boolean retains(UUID player) {
+            return arriveAt >= 0 && player.equals(ctx.target().getUniqueId());
+        }
+
+        @Override
         protected void onParticipantLost(UUID player, LossReason reason) {
             if (!player.equals(ctx.target().getUniqueId())) {
                 if (body != null) {
@@ -482,6 +711,24 @@ final class HuntEvent implements HorrorEvent {
                 return;
             }
             switch (reason) {
+                case TELEPORT, WORLD_CHANGE -> {
+                    if (arriveAt >= 0) {
+                        return;
+                    }
+                    if (aftermathSince < 0 && follows < ctx.him().config().chase().teleport().follows()) {
+                        // Teleporting away does not shake him off: he will be there shortly.
+                        follows++;
+                        hideBody();
+                        carrier.stop();
+                        long now = ctx.him().tick();
+                        arriveAt = now + 60 + ctx.him().random().nextInt(80);
+                        followDeadline = arriveAt + 200;
+                        ctx.him().log().debug(() -> "hunt: " + ctx.target().getName() + " teleported away, following");
+                        return;
+                    }
+                    end(ChaseBrain.EndReason.TELEPORTED);
+                }
+                case PORTAL -> end(ChaseBrain.EndReason.TELEPORTED);
                 case QUIT -> end(ChaseBrain.EndReason.TARGET_GONE);
                 case DEATH -> end(ctx.him().consumeKilledByHim(player) ? ChaseBrain.EndReason.CAUGHT
                         : ChaseBrain.EndReason.ABORTED);
@@ -492,6 +739,9 @@ final class HuntEvent implements HorrorEvent {
 
         @Override
         protected void cleanup() {
+            if (siege != null && viewers != null) {
+                siege.stop(viewers);
+            }
             for (Block b : openedDoors.keySet()) {
                 closeDoor(b);
             }

@@ -2,7 +2,7 @@ package dev.projecthim.him.entity;
 
 import com.destroystokyo.paper.SkinParts;
 import dev.projecthim.him.platform.EntityTags;
-import dev.projecthim.him.platform.SkinService;
+import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import dev.projecthim.him.util.MathUtil;
 import java.util.Collection;
 import java.util.HashSet;
@@ -35,14 +35,14 @@ public final class HimBody {
         this.entity = entity;
     }
 
-    static HimBody spawn(Plugin plugin, EntityTags tags, SkinService skin, Location at) {
+    static HimBody spawn(Plugin plugin, EntityTags tags, ResolvableProfile profile, Location at) {
         World world = at.getWorld();
         Mannequin m = world.spawn(at, Mannequin.class, e -> {
             // Runs before the entity is added to the world: nobody ever sees a default state.
             e.setVisibleByDefault(false);
             e.setPersistent(false);
             e.setRemoveWhenFarAway(false);
-            e.setProfile(skin.profile());
+            e.setProfile(profile);
             SkinParts.Mutable parts = SkinParts.allParts();
             parts.setCapeEnabled(false);
             e.setSkinParts(parts);
@@ -143,6 +143,22 @@ public final class HimBody {
                 entity.setBodyYaw(body);
             }
         }
+    }
+
+    /** Changes the skin while the body is visible (e.g. a disguise dropping). */
+    public void setProfile(ResolvableProfile profile) {
+        if (valid()) {
+            entity.setProfile(profile);
+        }
+    }
+
+    /** Shows a name above the body like a player's name tag, or removes it with null. */
+    public void setName(String name) {
+        if (!valid()) {
+            return;
+        }
+        entity.customName(name == null ? null : net.kyori.adventure.text.Component.text(name));
+        entity.setCustomNameVisible(name != null);
     }
 
     public Location location() {

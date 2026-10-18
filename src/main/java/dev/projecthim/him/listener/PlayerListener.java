@@ -7,6 +7,7 @@ import dev.projecthim.him.memory.HeatMap;
 import dev.projecthim.him.memory.PlayerMemory;
 import dev.projecthim.him.player.PlayerSession;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
@@ -72,12 +73,36 @@ public final class PlayerListener implements Listener {
         him.events().participantLost(event.getPlayer().getUniqueId(), LossReason.WORLD_CHANGE);
     }
 
+    /** Optionally, a hunted player cannot teleport away by command (/tp, /home, /spawn, /tpa...). */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onTeleportAttempt(PlayerTeleportEvent event) {
+        PlayerTeleportEvent.TeleportCause cause = event.getCause();
+        if ((cause == PlayerTeleportEvent.TeleportCause.COMMAND || cause == PlayerTeleportEvent.TeleportCause.PLUGIN)
+                && him.config().chase().teleport().blockCommands()
+                && him.events().isHunted(event.getPlayer().getUniqueId())
+                && !event.getPlayer().hasPermission("him.bypass-teleport-block")) {
+            event.setCancelled(true);
+            event.getPlayer().sendActionBar(Component.text("你無法離開這裡。", NamedTextColor.DARK_RED));
+        }
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onTeleport(PlayerTeleportEvent event) {
         Location from = event.getFrom();
         Location to = event.getTo();
         if (from.getWorld() != to.getWorld() || from.distanceSquared(to) > 48 * 48) {
-            him.events().participantLost(event.getPlayer().getUniqueId(), LossReason.TELEPORT);
+            boolean portal = switch (event.getCause()) {
+                case NETHER_PORTAL, END_PORTAL, END_GATEWAY -> true;
+                default -> false;
+            };
+            him.events().participantLost(event.getPlayer().getUniqueId(), portal ? LossReason.PORTAL : LossReason.TELEPORT);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSignWritten(org.bukkit.event.block.SignChangeEvent event) {
+        if (event.getSide() == org.bukkit.block.sign.Side.FRONT) {
+            him.signs().written(event.getPlayer(), event.getBlock(), event.lines());
         }
     }
 

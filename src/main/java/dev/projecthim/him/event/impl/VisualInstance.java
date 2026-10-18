@@ -5,6 +5,7 @@ import dev.projecthim.him.event.Apparition;
 import dev.projecthim.him.event.EventContext;
 import dev.projecthim.him.event.EventInstance;
 import dev.projecthim.him.memory.Outcome;
+import io.papermc.paper.datacomponent.item.ResolvableProfile;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -31,7 +32,12 @@ abstract class VisualInstance extends EventInstance {
     }
 
     protected Optional<Apparition> spawn(Location feet, Collection<? extends Player> viewers, boolean concealed) {
-        Optional<Apparition> a = Apparition.spawn(ctx.him(), feet, viewers, concealed);
+        return spawn(feet, viewers, concealed, null);
+    }
+
+    protected Optional<Apparition> spawn(Location feet, Collection<? extends Player> viewers, boolean concealed,
+                                         ResolvableProfile profile) {
+        Optional<Apparition> a = Apparition.spawn(ctx.him(), feet, viewers, concealed, profile);
         a.ifPresent(apparition -> {
             apparitions.add(apparition);
             setWhere(feet);

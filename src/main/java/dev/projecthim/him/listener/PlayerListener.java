@@ -88,6 +88,9 @@ public final class PlayerListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onTeleport(PlayerTeleportEvent event) {
+        if (event.getCause() == PlayerTeleportEvent.TeleportCause.ENDER_PEARL) {
+            him.events().targetPearled(event.getPlayer().getUniqueId());
+        }
         Location from = event.getFrom();
         Location to = event.getTo();
         if (from.getWorld() != to.getWorld() || from.distanceSquared(to) > 48 * 48) {

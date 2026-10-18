@@ -15,6 +15,7 @@ public final class ChaseStats {
     private int caught;
     private int repelled;
     private int slain;
+    private int pearls;
     private int hitsLanded;
     private int hitsTaken;
     private long lastHuntAt;
@@ -47,6 +48,15 @@ public final class ChaseStats {
 
     public int slain() {
         return slain;
+    }
+
+    /** The player threw an ender pearl while he hunted them. */
+    public void recordPearl() {
+        pearls++;
+    }
+
+    public int pearls() {
+        return pearls;
     }
 
     public void recordHitLanded() {

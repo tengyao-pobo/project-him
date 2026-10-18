@@ -99,10 +99,20 @@ public record HimConfig(
      * @param minionCount      how many
      * @param minionTypes      entity types, e.g. ZOMBIE, SKELETON, SPIDER
      * @param bossBarMinTier   from this tier on the hunted see his health as a boss bar (0 = never)
+     * @param pearl            ender pearls across what he cannot walk (chasms, cliffs, water, ledges)
      */
     public record Elite(int minTier, boolean leap, boolean speedPotion, double speedBoost, boolean minions,
                         int minionMinTier, double minionBelowHealth, int minionCount, List<String> minionTypes,
-                        int bossBarMinTier) {
+                        int bossBarMinTier, Pearl pearl) {
+    }
+
+    /**
+     * @param maxPerHunt     pearls per hunt
+     * @param cooldownTicks  pause between pearls
+     * @param maxDistance    never thrown further than this (no long-range escapes for him either)
+     * @param selfDamage     what landing costs him, as it costs a player
+     */
+    public record Pearl(boolean enabled, int maxPerHunt, int cooldownTicks, double maxDistance, double selfDamage) {
     }
 
     /**
@@ -415,7 +425,12 @@ public record HimConfig(
                         r.number("chase.elite.minions.below-health", 0.5, 0, 1),
                         r.integer("chase.elite.minions.count", 3, 0, 8),
                         minionTypes(r),
-                        r.integer("chase.elite.boss-bar-min-tier", 4, 0, 5)),
+                        r.integer("chase.elite.boss-bar-min-tier", 4, 0, 5),
+                        new Pearl(r.bool("chase.elite.ender-pearl.enabled", true),
+                                r.integer("chase.elite.ender-pearl.max-per-hunt", 2, 0, 16),
+                                r.integer("chase.elite.ender-pearl.cooldown-ticks", 200, 20, 6000),
+                                r.number("chase.elite.ender-pearl.max-distance", 30, 4, 64),
+                                r.number("chase.elite.ender-pearl.self-damage", 5, 0, 100))),
                 new Water(r.bool("chase.water.enabled", true),
                         r.integer("chase.water.min-tier", 1, 0, 5),
                         r.number("chase.water.swim-speed", 0.9, 0.3, 1.5),

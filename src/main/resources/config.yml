@@ -264,6 +264,15 @@ chase:
       types: [ZOMBIE, SKELETON]
     # 從這個等級開始，被追殺的人會看到他的 BOSS 血條（0 = 永不顯示）。
     boss-bar-min-tier: 4
+    # 終界珍珠：路走不到時（峽谷、懸崖、水道、高台），丟珍珠到你附近。看得到它飛過來。
+    # 平地追逐時不會用（衝刺逃跑仍然有效），不會丟進真正的室內，也不會丟得比 max-distance 遠。
+    # 落地時他和玩家一樣會受傷（self-damage，從他的生命值扣）。
+    ender-pearl:
+      enabled: true
+      max-per-hunt: 2
+      cooldown-ticks: 200
+      max-distance: 30
+      self-damage: 5
 
 # ----------------------------------------------------------------------------
 # 世界干擾

@@ -142,6 +142,12 @@ public final class EntityListener implements Listener {
         if (target == null) {
             return;
         }
+        if (projectile instanceof org.bukkit.entity.EnderPearl) {
+            // His pearl: the hunt moves him itself; the game must not teleport the body.
+            event.setCancelled(true);
+            projectile.remove();
+            return;
+        }
         Entity hit = event.getHitEntity();
         if (hit instanceof org.bukkit.entity.Boat boat
                 && boat.getPassengers().stream().anyMatch(e -> e.getUniqueId().equals(target))) {

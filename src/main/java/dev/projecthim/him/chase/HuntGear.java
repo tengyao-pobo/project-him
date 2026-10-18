@@ -118,7 +118,9 @@ public final class HuntGear {
             return Loadout.NONE;
         }
         EscapeMethod habit = stats.favouriteEscape();
-        boolean runner = habit == EscapeMethod.OUTRAN || habit == EscapeMethod.FLEW || habit == EscapeMethod.BROKE_SIGHT;
+        // Players who pearl away count as runners too: they meet the bow more often.
+        boolean runner = habit == EscapeMethod.OUTRAN || habit == EscapeMethod.FLEW || habit == EscapeMethod.BROKE_SIGHT
+                || stats.pearls() >= 3;
         boolean fighter = habit == EscapeMethod.FOUGHT || stats.repelled() + stats.slain() * 2 > stats.escapes();
         Material melee = melee(tier, underground, fighter, arsenal, random);
         Material ranged = arsenal.bow() && tier >= 2 && random.nextDouble() < (runner ? 0.7 : 0.35) ? Material.BOW : null;
@@ -248,7 +250,12 @@ public final class HuntGear {
      * 0.05 blocks per tick per tick.
      */
     public static double arrowLift(double distance, double speed) {
+        return lift(distance, speed, 0.05);
+    }
+
+    /** The same for anything thrown, with its own gravity (an ender pearl falls 0.03 per tick per tick). */
+    public static double lift(double distance, double speed, double gravity) {
         double ticks = distance / speed;
-        return 0.5 * 0.05 * ticks * ticks;
+        return 0.5 * gravity * ticks * ticks;
     }
 }

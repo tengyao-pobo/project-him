@@ -231,6 +231,13 @@ public final class EventManager {
         }
     }
 
+    public void targetPearled(UUID player) {
+        EventInstance instance = locks.get(player);
+        if (instance != null && !instance.finished() && instance.context().target().getUniqueId().equals(player)) {
+            instance.onTargetPearl();
+        }
+    }
+
     /** Whether the player is being hunted right now. */
     public boolean isHunted(UUID player) {
         EventInstance instance = locks.get(player);

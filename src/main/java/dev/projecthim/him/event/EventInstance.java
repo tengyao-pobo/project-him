@@ -79,6 +79,10 @@ public abstract class EventInstance {
         PORTAL
     }
 
+    /** The target threw an ender pearl to get away. */
+    protected void onTargetPearl() {
+    }
+
     /** Whether the instance still follows a participant it was just told it lost (see {@link #onParticipantLost}). */
     protected boolean retains(UUID player) {
         return false;

@@ -172,6 +172,16 @@ final class HuntEvent implements HorrorEvent {
         /** The damage bonus of his own weapon, already in the settings (replaced while the trident is out). */
         private double meleeBonus;
         private Pose shownPose = Pose.STANDING;
+        /** Ender pearls: one in flight, where it should bring him, how many are left. */
+        private boolean lastReachable = true;
+        /** Since when the player has been out of walking reach while he made no progress (-1 = not). */
+        private long stuckOutOfReachSince = -1;
+        private org.bukkit.entity.EnderPearl pearl;
+        private Location pearlLanding;
+        private Location pearlLast;
+        private long pearlThrownAt;
+        private long nextPearlAt;
+        private int pearlsUsed;
 
         Instance(EventContext ctx) {
             super(ctx);
@@ -440,6 +450,12 @@ final class HuntEvent implements HorrorEvent {
             // between them must not leave him standing there forever.
             boolean reachable = carrier.lastPlanReachedGoal()
                     || carrierLoc.distance(pl) <= settings.attackRange() + (progressing ? 1.0 : 0.0);
+            lastReachable = reachable;
+            if (reachable || progressing) {
+                stuckOutOfReachSince = -1;
+            } else if (stuckOutOfReachSince < 0) {
+                stuckOutOfReachSince = tick;
+            }
 
             ChaseBrain.Command cmd = brain.tick(new ChaseBrain.Inputs(tick, vec(carrierLoc), targetPos, targetVelocity,
                     himSeesTarget, targetSeesHim, p.isInWater(), targetSheltered, progressing, reachable, hits,
@@ -513,12 +529,17 @@ final class HuntEvent implements HorrorEvent {
             } else {
                 watchingFromBelow = false;
             }
-            if (cmd.reposition() && !targetSeesHim) {
+            // A skilled HIM who can see them throws a pearl, in the open, rather than slipping round unseen.
+            var pearlCfg = ctx.him().config().chase().elite().pearl();
+            boolean pearlFirst = elite && pearlCfg.enabled() && pearlsUsed < pearlCfg.maxPerHunt() && himSeesTarget;
+            if (cmd.reposition() && !targetSeesHim && !pearlFirst) {
                 reposition(p);
                 carrierLoc = carrier.location();
             }
             updateWaterMode(p, carrierLoc);
-            if (leapStart >= 0) {
+            if (pearl != null) {
+                pearlTick(tick, p);
+            } else if (leapStart >= 0) {
                 leapTick(tick, p);
             } else if (riptideStart >= 0) {
                 riptideTick(tick, p);
@@ -587,7 +608,7 @@ final class HuntEvent implements HorrorEvent {
             double dy = follow.getY() - p.getY();
             boolean maceSmash = HuntGear.smashBonus(loadout.mainHand(), dy) > 0 && horizontal <= settings.attackRange();
             if (cmd.attackAllowed() && tick >= nextAttackAt && bodyShown && himSeesTarget && drawingUntil < 0
-                    && leapStart < 0 && riptideStart < 0 && tridentChargeUntil < 0) {
+                    && leapStart < 0 && riptideStart < 0 && tridentChargeUntil < 0 && pearl == null) {
                 if (horizontal <= settings.attackRange() && (Math.abs(dy) < 2.0 || maceSmash)) {
                     attack(p, follow, cmd.mode(), dy);
                     nextAttackAt = tick + settings.attackCooldownTicks();
@@ -596,6 +617,7 @@ final class HuntEvent implements HorrorEvent {
             ranged(tick, p, follow, cmd, distance);
             elitePlays(tick, p, follow, cmd, distance);
             waterPlays(tick, p, follow, cmd, distance);
+            pearlPlay(tick, p, follow, cmd, distance);
             updatePose(carrier.location());
         }
 
@@ -640,6 +662,113 @@ final class HuntEvent implements HorrorEvent {
             if (want != shownPose && Mannequin.validPoses().contains(want)) {
                 shownPose = want;
                 body.entity().setPose(want, true);
+            }
+        }
+
+        /**
+         * An ender pearl, thrown in the open where it can be seen, when the way to the player cannot be
+         * walked: across a chasm, up a cliff, over water. Never on level running ground (outrunning
+         * him stays possible), never into a real shelter, never further than the configured distance.
+         */
+        private void pearlPlay(long tick, Player p, Location from, ChaseBrain.Command cmd, double distance) {
+            var cfg = ctx.him().config().chase().elite().pearl();
+            if (!elite || !cfg.enabled() || pearlsUsed >= cfg.maxPerHunt() || tick < nextPearlAt || pearl != null
+                    || aftermathSince >= 0 || !bodyShown || !himSeesTarget || targetSheltered || lastReachable
+                    || stuckOutOfReachSince < 0 || tick - stuckOutOfReachSince < 30
+                    || drawingUntil >= 0 || tridentChargeUntil >= 0 || leapStart >= 0 || riptideStart >= 0
+                    || distance < 6 || distance > cfg.maxDistance() || p.isGliding()) {
+                return;
+            }
+            boolean chasing = cmd.mode() == ChaseBrain.Mode.PURSUE || cmd.mode() == ChaseBrain.Mode.SEARCH
+                    || cmd.mode() == ChaseBrain.Mode.SIEGE || cmd.mode() == ChaseBrain.Mode.BURST;
+            if (!chasing) {
+                return;
+            }
+            nextPearlAt = tick + 40;
+            Location pl = p.getLocation();
+            Vector toHim = from.toVector().subtract(pl.toVector()).setY(0);
+            if (toHim.lengthSquared() < 1.0E-4) {
+                return;
+            }
+            Location aim = pl.clone().add(toHim.normalize().multiply(2.5));
+            Optional<Location> landing = Ground.findStandable(p.getWorld(), aim.getBlockX(), pl.getBlockY(), aim.getBlockZ(),
+                    3, 4);
+            if (landing.isEmpty()) {
+                return;
+            }
+            Location land = landing.get();
+            Location eye = body.entity().getEyeLocation();
+            // A clear throw: nothing solid between his hand and where it lands.
+            if (Sight.visibility(eye.getWorld(), eye.toVector(), land.toVector().add(new Vector(0, 0.5, 0))) < 0.9) {
+                return;
+            }
+            double speed = 1.5;
+            double d = eye.distance(land);
+            Vector vel = land.toVector().add(new Vector(0, 0.3, 0)).subtract(eye.toVector());
+            vel.setY(vel.getY() + HuntGear.lift(d, speed, 0.03));
+            org.bukkit.entity.EnderPearl thrown = body.entity().launchProjectile(org.bukkit.entity.EnderPearl.class,
+                    vel.normalize().multiply(speed));
+            thrown.setPersistent(false);
+            thrown.setVisibleByDefault(false);
+            ctx.him().entities().tags().markProjectile(thrown, p.getUniqueId());
+            for (Player v : viewers) {
+                if (v.isOnline()) {
+                    v.showEntity(ctx.him().plugin(), thrown);
+                }
+            }
+            body.entity().swingMainHand();
+            SoundCues.play(viewers, eye, Sound.ENTITY_ENDER_PEARL_THROW, SoundCategory.HOSTILE, 1.0f, 0.8f);
+            pearl = thrown;
+            pearlLanding = land;
+            pearlLast = thrown.getLocation();
+            pearlThrownAt = tick;
+            pearlsUsed++;
+            nextPearlAt = tick + cfg.cooldownTicks();
+            ctx.him().log().debug(() -> "hunt: ender pearl towards " + land.toVector());
+        }
+
+        /** The pearl is in the air; when it comes down, so does he, and it costs him, as it would anyone. */
+        private void pearlTick(long tick, Player p) {
+            carrier.stop();
+            if (pearl.isValid() && tick - pearlThrownAt < 60) {
+                pearlLast = pearl.getLocation();
+                return;
+            }
+            if (pearl.isValid()) {
+                pearl.remove();
+            }
+            pearl = null;
+            // Where it actually came down, if he can stand there; otherwise where he aimed.
+            Location at = Ground.findStandable(pearlLast.getWorld(), pearlLast.getBlockX(), pearlLast.getBlockY(),
+                    pearlLast.getBlockZ(), 2, 3).filter(l -> l.distanceSquared(pearlLanding) < 36).orElse(pearlLanding);
+            at.setYaw(MathUtil.yawTowards(at.getX(), at.getZ(), p.getX(), p.getZ()));
+            Location before = carrier.location();
+            carrier.teleport(at);
+            body.moveTo(at);
+            for (Player v : viewers) {
+                if (v.isOnline() && v.getWorld() == at.getWorld()) {
+                    v.spawnParticle(Particle.PORTAL, before.clone().add(0, 1, 0), 30, 0.3, 0.8, 0.3, 0.3);
+                    v.spawnParticle(Particle.PORTAL, at.clone().add(0, 1, 0), 30, 0.3, 0.8, 0.3, 0.3);
+                }
+            }
+            SoundCues.play(viewers, at, Sound.ENTITY_PLAYER_TELEPORT, SoundCategory.HOSTILE, 1.0f, 0.8f);
+            var combat = ctx.him().config().chase().combat();
+            double cost = ctx.him().config().chase().elite().pearl().selfDamage();
+            if (combat.killable() && cost > 0) {
+                // Never his death: a pearl is a tool, not a way to beat him.
+                health = Math.max(1, health - cost);
+                body.entity().playHurtAnimation(0);
+                if (bossBar != null) {
+                    bossBar.progress((float) Math.max(0, Math.min(1, health / maxHealth)));
+                }
+            }
+            ctx.him().log().debug(() -> "hunt: landed his pearl at " + at.toVector());
+        }
+
+        @Override
+        protected void onTargetPearl() {
+            if (learns()) {
+                ctx.session().memory().chase().recordPearl();
             }
         }
 
@@ -1540,6 +1669,9 @@ final class HuntEvent implements HorrorEvent {
 
         @Override
         protected void cleanup() {
+            if (pearl != null && pearl.isValid()) {
+                pearl.remove();
+            }
             hideBossBar();
             dismissMinions();
             if (siege != null && viewers != null) {

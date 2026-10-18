@@ -178,4 +178,15 @@ class HuntGearTest {
         }
         assertEquals(4, HuntGear.ofTier(9, new ChaseStats(), false, r, true, HuntGear.Arsenal.ALL).tier());
     }
+
+    @Test
+    void pearlUsersCountAsRunners() {
+        ChaseStats pearler = new ChaseStats();
+        for (int i = 0; i < 5; i++) {
+            pearler.recordEscape(ChaseStats.EscapeMethod.FOUGHT);
+            pearler.recordPearl();
+        }
+        assertEquals(5, pearler.pearls());
+        assertTrue(HuntGear.lift(20, 1.5, 0.03) < HuntGear.lift(20, 1.5, 0.05));
+    }
 }

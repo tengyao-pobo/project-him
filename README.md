@@ -245,6 +245,15 @@ plugins/HIM/data/
 - **開闊地形**：完全沒有遮蔽物的地形中，「需要掩體」的事件（探頭、追殺中的隱藏重新定位）會自動不發生或改用其他方式；這是刻意的。
 - **Folia 不支援。**
 
+## 發佈新版本
+
+GitHub Actions（`.github/workflows/build.yml`）在每次推送與 PR 時以 JDK 25 建置並執行全部測試。
+發佈新版本只需要：
+
+1. 修改 `build.gradle.kts` 的 `version`（例如 `1.1.0`）。
+2. 新增 `docs/releases/v1.1.0.md` 作為版本說明（沒有的話會自動產生）。
+3. 推送到 `main`。CI 發現這個版本還沒有 Release 時，會建立 `v1.1.0` 標籤與 Release，並附上建置出的 JAR。
+
 ## 從原始碼建置
 
 需要 JDK 25。

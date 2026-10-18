@@ -1,0 +1,53 @@
+name: HIM
+version: '${version}'
+main: dev.projecthim.him.HimPlugin
+api-version: '26.3'
+description: '${description}'
+authors: [PROJECT HIM]
+load: POSTWORLD
+folia-supported: false
+
+permissions:
+  him.admin:
+    description: 所有 HIM 管理指令
+    default: op
+    children:
+      him.command.status: true
+      him.command.debug: true
+      him.command.trigger: true
+      him.command.summon: true
+      him.command.memory: true
+      him.command.reset: true
+      him.command.reload: true
+      him.command.toggle: true
+      him.command.selftest: true
+  him.command.status:
+    description: 查看 HIM 狀態、效能與事件清單
+    default: op
+  him.command.debug:
+    description: 接收除錯訊息、查看玩家導演狀態
+    default: op
+  him.command.trigger:
+    description: 手動觸發事件或追殺
+    default: op
+  him.command.summon:
+    description: 召喚 / 移除 HIM
+    default: op
+  him.command.memory:
+    description: 查看玩家記憶、設定階段與參與狀態
+    default: op
+  him.command.reset:
+    description: 重置玩家或世界記憶
+    default: op
+  him.command.reload:
+    description: 重新載入設定
+    default: op
+  him.command.toggle:
+    description: 暫停 / 恢復 HIM
+    default: op
+  him.command.selftest:
+    description: 執行伺服器內自我測試
+    default: op
+  him.exempt:
+    description: 永遠不會成為 HIM 的目標
+    default: false

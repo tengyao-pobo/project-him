@@ -1,0 +1,219 @@
+# ============================================================================
+#  HIM — He Is Memory （PROJECT HIM）
+#  Paper 26.3 心理恐怖插件設定檔
+#
+#  修改後執行 /him reload 即可套用；若設定有錯誤，插件會列出所有錯誤並保留
+#  先前的有效設定，不會無聲失敗。
+# ============================================================================
+
+# 設定檔版本，請勿手動修改。
+config-version: 1
+
+# 總開關。false 時 HIM 完全沉睡（指令仍可使用）。
+enabled: true
+
+logging:
+  # off / info / debug / trace
+  # debug 會在主控台記錄導演的決策；trace 會記錄大量內部細節，只建議除錯時使用。
+  level: info
+
+# ----------------------------------------------------------------------------
+# 世界
+# ----------------------------------------------------------------------------
+worlds:
+  # blacklist：清單中的世界不會出現 HIM；whitelist：只有清單中的世界會出現。
+  mode: blacklist
+  list: []
+  # 是否允許在地獄 / 終界發生事件（預設只在主世界類型的世界）。
+  allow-nether: false
+  allow-end: false
+
+# ----------------------------------------------------------------------------
+# 玩家參與
+# ----------------------------------------------------------------------------
+players:
+  # 新玩家預設是否成為 HIM 的目標（管理員可用 /him participation 個別調整）。
+  participate-by-default: true
+  # 擁有 him.exempt 權限的玩家永遠不會成為目標。
+  respect-exempt-permission: true
+  # 玩家登入後的寬限時間（分鐘），期間不會發生任何事件。
+  grace-minutes-after-join: 2
+  # 只針對生存 / 冒險模式玩家（創造與旁觀模式不受影響）。
+  survival-and-adventure-only: true
+
+# ----------------------------------------------------------------------------
+# 恐怖導演（Horror Director）
+# 沒有固定時間表：發生機率會隨「安靜了多久」逐漸升高，並受階段、張力節奏、
+# HIM 的性格、環境與伺服器效能影響。沉默本身也是 HIM 的選擇。
+# ----------------------------------------------------------------------------
+director:
+  # 整體事件頻率倍率。0 = 完全不主動發生事件，2 = 約兩倍頻繁。
+  frequency: 1.0
+  # 恐怖強度倍率（影響可選事件的強度上限）。0.5 較溫和，1.5 更激烈。
+  intensity: 1.0
+  # 每位玩家多久評估一次（秒）。
+  evaluation-interval-seconds: 6
+  # 同一位玩家兩次事件之間最短的安靜時間（秒）。
+  min-gap-seconds: 150
+  # 各階段平均安靜時間（分鐘），依序為：未察覺、被注意、被監視、被獵殺、執念。
+  mean-gap-minutes: [35, 24, 17, 13, 10]
+  # 危險率曲線形狀（1 = 完全隨機；越大越接近「安靜越久越可能發生」）。
+  hazard-shape: 2.0
+  # 允許達到的最高階段（0-4）。設為 2 代表永遠不會進入追殺階段。
+  max-stage: 4
+  # 進入各階段所需的遊玩時間（分鐘）與需要的「顯著遭遇」次數。
+  stage-play-minutes: [0, 15, 45, 120, 240]
+  stage-encounters: [0, 0, 2, 5, 10]
+  # HIM 刻意打破玩家已熟悉之規律的最短間隔（分鐘）。
+  subversion-min-gap-minutes: 45
+  # 所有事件本身冷卻時間的倍率。
+  event-cooldown-multiplier: 1.0
+  # 全伺服器恐怖預算（權杖桶）：避免人多時事件過度密集。
+  global-budget:
+    capacity: 4.0
+    refill-per-minute: 0.6
+  # 停用的事件 ID（用 /him events 查看所有事件）。
+  disabled-events: []
+
+# ----------------------------------------------------------------------------
+# HIM 的外觀（Paper Mannequin 實體）
+# ----------------------------------------------------------------------------
+apparitions:
+  # 全伺服器同時存在的 HIM 身影上限（包含私人幻覺）。
+  max-active: 3
+  # 出現位置與玩家的最遠距離。
+  max-distance: 96
+  skin:
+    # 已由 Mojang 簽名的經典白眼皮膚資料（textures 屬性的 value 與 signature）。
+    # 可以換成任何由 Mojang 簽名的皮膚（例如從 mineskin.org 取得）。
+    texture-value: "ewogICJ0aW1lc3RhbXAiIDogMTczNjIyMDkyNjc2MCwKICAicHJvZmlsZUlkIiA6ICJjNjI5MzRjYmE5YTE0NjYwYTk3NTk0YjNlMjQ0ZjhhOSIsCiAgInByb2ZpbGVOYW1lIiA6ICJBQUFycm9iYSIsCiAgInNpZ25hdHVyZVJlcXVpcmVkIiA6IHRydWUsCiAgInRleHR1cmVzIiA6IHsKICAgICJTS0lOIiA6IHsKICAgICAgInVybCIgOiAiaHR0cDovL3RleHR1cmVzLm1pbmVjcmFmdC5uZXQvdGV4dHVyZS9jY2NmNmU0YjIxZmQzODc1YTA4NTY3ZDliZDU1NmYzZWU2OTYyMTg2NzM5NGQyNGI5NmQ3ZjBmYThkMmFlZDE4IgogICAgfQogIH0KfQ=="
+    texture-signature: "IAUARrvpQqBq7QmE407LCQ373/zt6yTpBmtCFfxE63WGma+jnrcrXwsBa0NTGFIciicogG212fpWBNnuYIhcKXS6G1rsKKwSqTho9WXysAsTApYWSGZ6Pz/PzsUCJT53xNbplY1d2P5dZL1hSI//Q6UKOtAd5mLtwheZDAXPCLyNruXU0ysUDJBFd6QPggXl/RLUVGcA+X5sP8sfQUsaZDdUduMgoJ8ob675q6/veBaYaoiSGWmcthn5/RQAnPxB7LOaMT+h82MrXu4b7Lzu0D1BnwKFJFCDrZxBg0vsGVQWTTtUetsPNaFZ4o8uEmHQOZ8UkimCNhW6MYLCbX/8m0V1v7gb51M4Iqp907Rh9vLwU2l2YaoolKAE/MchnXEgsJUDaWjONYT8FPIAatWR5Ckc6r4UydV/p0CHelDO0wM3kcys2Z7BMz6q3v0wxwFRbNGU0VGPVzgT0LOJ/26VBxxHSk4DOW49jjvY8pueNYs47pVeEX7Yf1oO+1wEL+RCKBXjxBEVxAJEERSsHk+iBdMfnev+Lvc9nD4BhV/QADZELJv6nyvuZ+iVFaqLww07jWnKadwYF3pVTUKfsqhaijagAf2jjQrTqAeuWtzCaMR5ueau0AZ9p5MY5EsKM7NMh+GjUojWMO089eldp1B0RsB3YY3vKZGbSk8V+QXWnxA="
+
+# ----------------------------------------------------------------------------
+# 追殺
+# ----------------------------------------------------------------------------
+chase:
+  enabled: true
+  # 追殺傾向倍率。0 = 永不追殺，1 = 預設，2 = 很好戰。
+  aggression: 1.0
+  # 全伺服器同時進行的追殺上限。
+  max-concurrent: 1
+  # 速度（方塊/秒）。玩家行走約 4.3、衝刺約 5.6。
+  speed:
+    walk: 3.0
+    run: 5.0
+    burst: 6.6
+  # 短暫爆發衝刺的持續與冷卻（tick，20 tick = 1 秒）。
+  burst-ticks: 26
+  burst-cooldown-ticks: 160
+  # 攻擊距離、傷害（1.0 = 半顆心）與攻擊冷卻。
+  attack-range: 1.9
+  damage: 5.0
+  attack-cooldown-ticks: 24
+  # false 時 HIM 的攻擊最多讓玩家剩半顆心，不會致死。
+  lethal: true
+  # 追殺最長持續時間（秒），時間到 HIM 會放棄並離開。
+  max-duration-seconds: 100
+  # 現身後靜止凝視的時間（tick），給玩家反應時間。
+  reveal-ticks: 36
+  # 失去視線多久後轉入搜尋（tick）與搜尋多久後放棄（秒）。
+  lose-sight-ticks: 70
+  search-seconds: 18
+  # 距離超過多少格且看不見玩家時判定玩家逃脫。
+  escape-distance: 40
+  # 玩家擊中 HIM 幾次後他會被擊退並撤離。
+  hits-to-repel: 6
+  # 假撤退（轉身消失、再從前方繞出）的傾向（0-1）。
+  fake-retreat-chance: 0.35
+  # 卡住時，在玩家看不到的情況下允許重新定位的次數（不會無限瞬移）。
+  max-hidden-repositions: 2
+  # 追殺時是否會打開木門 / 柵欄門（事後自動關上）。
+  open-doors: true
+  # 被 HIM 殺死時的死亡訊息。{player} 代表玩家名稱。留空則使用原版訊息。
+  death-message: "{player} 再也沒有回來。"
+
+# ----------------------------------------------------------------------------
+# 世界干擾
+# 假方塊只送給目標玩家的客戶端，不會改變真實世界。
+# 真實修改一律記錄於回滾日誌，會在無人觀看時自動還原，伺服器重啟後也會繼續還原。
+# ----------------------------------------------------------------------------
+world-modification:
+  # 總開關：false 時所有方塊相關事件（包含假方塊）都停用。
+  enabled: true
+  # 允許只有玩家看得到的假方塊（熄滅的火把、裂痕、神龕、告示牌）。
+  fake-blocks: true
+  # 允許真實修改（無葉的樹、礦洞中的通道）。只會修改天然方塊。
+  real-changes: true
+  # 遵守 mobGriefing 遊戲規則（關閉時不做真實修改）。
+  respect-mob-griefing: true
+  # 真實修改在多少分鐘後還原（還原只在附近沒有玩家時進行）。
+  revert-after-minutes: 20
+  # 真實修改不會發生在玩家基地估計位置、床、世界出生點的此半徑內。
+  protect-radius: 48
+  # 某區塊被玩家放置超過此數量的方塊就視為建築區，不做真實修改。
+  protect-built-threshold: 6
+  # 允許 HIM 打開玩家基地的門（只開門，不破壞）。
+  door-interaction: true
+
+# ----------------------------------------------------------------------------
+# 多人
+# ----------------------------------------------------------------------------
+multiplayer:
+  # 判定「玩家在一起」的半徑。
+  group-radius: 32
+  # 群體 / 共享遭遇最多參與人數。
+  max-participants: 4
+  # 允許只讓單一玩家看到的假聊天訊息（例如假的加入訊息）。
+  fake-chat: true
+
+# ----------------------------------------------------------------------------
+# 記憶與資料保存（plugins/HIM/data/）
+# ----------------------------------------------------------------------------
+memory:
+  # 自動存檔間隔（分鐘）。
+  autosave-minutes: 5
+  # 多少天沒上線的玩家資料會被遺忘（0 = 永不刪除）。
+  forget-after-days: 180
+  # 活動熱點的半衰期（天）：越短 HIM 越快「忘記」舊的活動區域。
+  heat-half-life-days: 10
+  # 每位玩家最多記住的熱點區塊數。
+  heat-capacity: 96
+  # 性格每天回歸基準值的比例（0 = 永久累積變化）。
+  personality-relax-per-day: 0.03
+
+# ----------------------------------------------------------------------------
+# 效能保護
+# 伺服器變慢時，HIM 會自動降低事件密度、停止新的追殺，嚴重時暫停所有事件。
+# ----------------------------------------------------------------------------
+performance:
+  # 平均 MSPT 超過此值視為吃緊（降低頻率、不開始新追殺）。
+  mspt-strained: 40
+  # 平均 MSPT 超過此值或 TPS 低於 tps-critical 視為危急（結束所有事件）。
+  mspt-critical: 48
+  tps-critical: 17
+  # 插件自身每 tick 的平均時間預算（毫秒），超過時降低 AI 更新頻率。
+  own-budget-ms: 2.0
+
+# ----------------------------------------------------------------------------
+# 玩家看得到的文字
+# 告示牌文字以 | 分隔四行，可用變數：{player} 玩家名稱、{days} 被 HIM 認識的天數、
+# {x} {z} 上次遭遇的座標。
+# ----------------------------------------------------------------------------
+messages:
+  # 假加入訊息顯示的名稱（只有目標玩家看得到）。
+  fake-join-name: Herobrine
+  sign-texts:
+    - "||我看見你了|"
+    - "|{player}||"
+    - "|不要回頭||"
+    - "我一直都在|||"
+    - "|你記得|{x} {z}|嗎"
+    - "|{days} 天了||"
+    - "||這裡不是|你的家"
+    - "|你為什麼|要跑|"
+  # 回到特殊地點時告示牌上的文字（留空 = 不放告示牌）。
+  landmark-texts:
+    escape-site: "|你逃走了||這次。"
+    death-site: "||又見面了|"
+    attack-site: "|會痛嗎||"
+    logout-site: "|你離開了|我在等|"

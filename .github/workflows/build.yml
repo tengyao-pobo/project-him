@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write
 
+# Runs on the same ref queue up instead of racing to publish the same release.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest

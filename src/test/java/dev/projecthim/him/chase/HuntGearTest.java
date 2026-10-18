@@ -158,4 +158,13 @@ class HuntGearTest {
                 null, null, false, false).tier());
         assertEquals(0, HuntGear.Loadout.fixed(null, null, null, null, null, null, null, false, false).tier());
     }
+
+    @Test
+    void toolsMatchHisGear() {
+        assertEquals(Material.STONE_PICKAXE, HuntGear.tool(HuntGear.ToolKind.PICKAXE, 0));
+        assertEquals(Material.IRON_AXE, HuntGear.tool(HuntGear.ToolKind.AXE, 2));
+        assertEquals(Material.DIAMOND_SHOVEL, HuntGear.tool(HuntGear.ToolKind.SHOVEL, 3));
+        assertEquals(Material.NETHERITE_HOE, HuntGear.tool(HuntGear.ToolKind.HOE, 4));
+        assertEquals(Material.SHEARS, HuntGear.tool(HuntGear.ToolKind.SHEARS, 4));
+    }
 }

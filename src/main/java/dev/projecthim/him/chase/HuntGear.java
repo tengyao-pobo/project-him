@@ -152,6 +152,25 @@ public final class HuntGear {
         return pool.get(r.nextInt(pool.size()));
     }
 
+    /** The kinds of tools blocks call for. */
+    public enum ToolKind {
+        PICKAXE, AXE, SHOVEL, HOE, SHEARS
+    }
+
+    /** The tool he takes out to break a block, made of the material that matches his gear tier. */
+    public static Material tool(ToolKind kind, int tier) {
+        if (kind == ToolKind.SHEARS) {
+            return Material.SHEARS;
+        }
+        String metal = switch (Math.max(0, Math.min(MAX_TIER, tier))) {
+            case 0, 1 -> "STONE";
+            case 2 -> "IRON";
+            case 3 -> "DIAMOND";
+            default -> "NETHERITE";
+        };
+        return Material.valueOf(metal + "_" + kind.name());
+    }
+
     /** Extra damage a held item adds to HIM's base attack. */
     public static double damageBonus(Material weapon) {
         if (weapon == null) {

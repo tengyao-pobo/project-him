@@ -207,7 +207,9 @@ final class HuntEvent implements HorrorEvent {
             equip(memory, p);
             showBody();
             showBossBar();
-            siege = new SiegeWorks(ctx.him(), ctx.him().config().chase().siege(), ctx.instanceId());
+            siege = new SiegeWorks(ctx.him(), ctx.him().config().chase().siege(), ctx.instanceId(), loadout.tier(),
+                    loadout.glint(), () -> body.entity().getEquipment().setItem(EquipmentSlot.HAND,
+                    item(heldWeapon(), loadout.glint()), true));
             // Players who keep escaping through water meet a better swimmer.
             waterFactor = memory.chase().favouriteEscape() == EscapeMethod.WATER ? 0.85 : 0.5;
             double aggression = ctx.him().memory().world().personality().get(Trait.AGGRESSION);
@@ -536,6 +538,7 @@ final class HuntEvent implements HorrorEvent {
                 carrier.stop();
             }
             closeDoorsBehind(tick);
+            siege.idle(tick);
 
             boolean visible = cmd.bodyVisible() || watchingFromBelow;
             if (visible && !bodyShown) {
@@ -612,6 +615,7 @@ final class HuntEvent implements HorrorEvent {
                 return;
             }
             tridentOut = want;
+            siege.handTaken();
             body.entity().getEquipment().setItem(EquipmentSlot.HAND,
                     item(want ? Material.TRIDENT : loadout.mainHand(), loadout.glint()), true);
             ctx.him().log().debug(() -> "hunt: " + (want ? "trident out" : "trident away"));
@@ -782,7 +786,9 @@ final class HuntEvent implements HorrorEvent {
          */
         private Location tactics(long tick, Player p, Location me, ChaseBrain.Command cmd, Location dest) {
             boolean closing = cmd.mode() == ChaseBrain.Mode.PURSUE || cmd.mode() == ChaseBrain.Mode.BURST;
-            if (!elite || !closing || me.getWorld() != p.getWorld()) {
+            // Only on level ground with them: footwork towards a side point would hide that the player
+            // is out of reach (a pillar), and the siege would never start.
+            if (!elite || !closing || me.getWorld() != p.getWorld() || Math.abs(p.getY() - me.getY()) >= 1.5) {
                 return dest;
             }
             Location pl = p.getLocation();
@@ -981,6 +987,7 @@ final class HuntEvent implements HorrorEvent {
             if (loadout.ranged() != null && !tridentOut && tick >= nextShotAt && distance >= 7 && distance <= 26
                     && (fleeing || cmd.mode() == ChaseBrain.Mode.SIEGE || ctx.him().random().nextDouble() < 0.01)) {
                 // Out comes the bow.
+                siege.handTaken();
                 body.entity().getEquipment().setItem(EquipmentSlot.HAND, item(loadout.ranged(), loadout.glint()), true);
                 body.entity().startUsingItem(EquipmentSlot.HAND);
                 drawingUntil = tick + 20;
@@ -1022,7 +1029,7 @@ final class HuntEvent implements HorrorEvent {
                 SoundCues.play(viewers, eye, Sound.ENTITY_ARROW_SHOOT, SoundCategory.HOSTILE, 1.0f, 0.8f);
             }
             m.clearActiveItem();
-            m.getEquipment().setItem(EquipmentSlot.HAND, item(loadout.mainHand(), loadout.glint()), true);
+            m.getEquipment().setItem(EquipmentSlot.HAND, item(heldWeapon(), loadout.glint()), true);
         }
 
         /** Slowness for runners, weakness for fighters, darkness in the dark. */

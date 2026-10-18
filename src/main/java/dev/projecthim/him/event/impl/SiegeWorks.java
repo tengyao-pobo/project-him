@@ -1,6 +1,7 @@
 package dev.projecthim.him.event.impl;
 
 import dev.projecthim.him.Him;
+import dev.projecthim.him.chase.HuntGear;
 import dev.projecthim.him.config.HimConfig;
 import dev.projecthim.him.entity.HimBody;
 import dev.projecthim.him.entity.HimCarrier;
@@ -13,6 +14,7 @@ import org.bukkit.GameRules;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
+import org.bukkit.Tag;
 import org.bukkit.SoundCategory;
 import org.bukkit.World;
 import org.bukkit.block.Block;
@@ -21,6 +23,8 @@ import org.bukkit.block.TileState;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Player;
 import org.bukkit.event.entity.EntityChangeBlockEvent;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
 
 /**
  * What HIM does during a siege, one action at a time, at a pace players can see and react to:
@@ -42,15 +46,74 @@ final class SiegeWorks {
     private final String owner;
     private final int crackSource;
     private final Set<Block> refused = new HashSet<>();
+    /** His gear tier and glint (tools match his gear), and how to put his weapon back in his hand. */
+    private final int tier;
+    private final boolean glint;
+    private final Runnable restoreHand;
     private int used;
     private Block working;
     private int progress;
+    /** What he took out for the work (a tool or a block), or null while his weapon is in hand. */
+    private Material holding;
+    private long releaseAt;
 
-    SiegeWorks(Him him, HimConfig.Siege cfg, String owner) {
+    SiegeWorks(Him him, HimConfig.Siege cfg, String owner, int tier, boolean glint, Runnable restoreHand) {
         this.him = him;
         this.cfg = cfg;
         this.owner = owner;
+        this.tier = tier;
+        this.glint = glint;
+        this.restoreHand = restoreHand;
         this.crackSource = 0x5E000000 | him.random().nextInt(0xFFFFFF);
+    }
+
+    /** The right tool for a block, as a player would pick it. */
+    private static HuntGear.ToolKind toolKind(Material m) {
+        if (Tag.LEAVES.isTagged(m) || Tag.WOOL.isTagged(m) || m == Material.COBWEB) {
+            return HuntGear.ToolKind.SHEARS;
+        }
+        if (Tag.MINEABLE_AXE.isTagged(m)) {
+            return HuntGear.ToolKind.AXE;
+        }
+        if (Tag.MINEABLE_SHOVEL.isTagged(m)) {
+            return HuntGear.ToolKind.SHOVEL;
+        }
+        if (Tag.MINEABLE_HOE.isTagged(m)) {
+            return HuntGear.ToolKind.HOE;
+        }
+        return HuntGear.ToolKind.PICKAXE;
+    }
+
+    private void hold(HimBody body, Material item, long tick) {
+        releaseAt = tick + 12;
+        if (item == holding) {
+            return;
+        }
+        holding = item;
+        ItemStack stack = new ItemStack(item);
+        if (glint && item.name().startsWith("NETHERITE_")) {
+            stack.editMeta(meta -> meta.setEnchantmentGlintOverride(true));
+        }
+        body.entity().getEquipment().setItem(EquipmentSlot.HAND, stack, true);
+    }
+
+    /** Something else took his hand (a bow, the trident): nothing of the work is in it any more. */
+    void handTaken() {
+        holding = null;
+    }
+
+    /** Puts the weapon back once there has been nothing to work on for a moment. */
+    void idle(long tick) {
+        if (holding != null && working == null && tick >= releaseAt) {
+            release();
+        }
+    }
+
+    private void release() {
+        if (holding != null) {
+            holding = null;
+            restoreHand.run();
+        }
     }
 
     int used() {
@@ -67,6 +130,7 @@ final class SiegeWorks {
             return false;
         }
         if (working != null) {
+            hold(body, HuntGear.tool(toolKind(working.getType()), tier), tick);
             return continueBreaking(tick, body, viewers);
         }
         Location pos = carrier.location();
@@ -81,7 +145,7 @@ final class SiegeWorks {
                 return false;
             }
             if (cfg.buildUp() && horizontal <= 2.5) {
-                return buildUp(carrier, body, viewers);
+                return buildUp(tick, carrier, body, viewers);
             }
             return false;
         }
@@ -156,7 +220,7 @@ final class SiegeWorks {
     }
 
     /** Places a block where he stands and rises onto it. */
-    private boolean buildUp(HimCarrier carrier, HimBody body, List<Player> viewers) {
+    private boolean buildUp(long tick, HimCarrier carrier, HimBody body, List<Player> viewers) {
         Location pos = carrier.location();
         Block feet = pos.getBlock();
         World w = feet.getWorld();
@@ -168,6 +232,8 @@ final class SiegeWorks {
                 || !Ground.free(w.getType(feet.getX(), feet.getY() + 2, feet.getZ()))) {
             return false;
         }
+        // The block he is about to place is in his hand, as it would be for anyone.
+        hold(body, material, tick);
         BlockData data = material.createBlockData();
         EntityChangeBlockEvent event = new EntityChangeBlockEvent(body.entity(), feet, data);
         Bukkit.getPluginManager().callEvent(event);
@@ -242,5 +308,6 @@ final class SiegeWorks {
             clearCrack(working, viewers);
             working = null;
         }
+        release();
     }
 }

@@ -84,6 +84,9 @@ class HimConfigTest {
         assertEquals(java.util.List.of("ZOMBIE", "SKELETON"), c.chase().elite().minionTypes());
         assertEquals(java.util.List.of("SLOWNESS", "WEAKNESS", "DARKNESS"), c.chase().weapons().potionEffects());
         assertEquals(4, c.chase().elite().bossBarMinTier());
+        assertTrue(c.chase().water().enabled());
+        assertTrue(c.chase().water().swimFactor() * c.chase().settings().runSpeed() < 5.6,
+                "with the trident he still swims slower than a player sprint-swims");
     }
 
     @Test

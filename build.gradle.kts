@@ -3,7 +3,7 @@ plugins {
 }
 
 group = "dev.projecthim"
-version = "1.3.0"
+version = "1.4.0"
 description = "HIM — He Is Memory. A psychological horror presence for Paper servers."
 
 // The exact Paper API build that this plugin is compiled and tested against.

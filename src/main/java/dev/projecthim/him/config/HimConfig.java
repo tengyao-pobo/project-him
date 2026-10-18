@@ -65,7 +65,24 @@ public record HimConfig(
     }
 
     public record Chase(boolean enabled, int maxConcurrent, ChaseSettings settings, String deathMessage, Siege siege,
-                        Gear gear, Flight flight, Teleport teleport, Combat combat, Weapons weapons, Elite elite) {
+                        Gear gear, Flight flight, Teleport teleport, Combat combat, Weapons weapons, Elite elite,
+                        Water water) {
+    }
+
+    /**
+     * Hunting a player who takes to the water (or stands in the rain).
+     *
+     * @param minTier            from this gear tier on he answers water with a trident (0 = always)
+     * @param swimFactor         his swimming speed with the trident, as a share of his running speed
+     * @param tridentDamage      damage of a thrown trident
+     * @param tridentCooldownTicks pause between throws
+     * @param riptide            elite: riptide dashes through water and rain
+     * @param channeling         netherite, in a thunderstorm: one lightning strike on the player per hunt
+     * @param channelingDamage   damage of that strike
+     * @param sinkBoats          his hits and tridents break the boat the player sits in
+     */
+    public record Water(boolean enabled, int minTier, double swimFactor, double tridentDamage, int tridentCooldownTicks,
+                        boolean riptide, boolean channeling, double channelingDamage, boolean sinkBoats) {
     }
 
     /**
@@ -393,7 +410,16 @@ public record HimConfig(
                         r.number("chase.elite.minions.below-health", 0.5, 0, 1),
                         r.integer("chase.elite.minions.count", 3, 0, 8),
                         minionTypes(r),
-                        r.integer("chase.elite.boss-bar-min-tier", 4, 0, 5)));
+                        r.integer("chase.elite.boss-bar-min-tier", 4, 0, 5)),
+                new Water(r.bool("chase.water.enabled", true),
+                        r.integer("chase.water.min-tier", 1, 0, 5),
+                        r.number("chase.water.swim-speed", 0.9, 0.3, 1.5),
+                        r.number("chase.water.trident-damage", 6.0, 0, 40),
+                        r.integer("chase.water.trident-cooldown-ticks", 50, 10, 2000),
+                        r.bool("chase.water.riptide", true),
+                        r.bool("chase.water.channeling", true),
+                        r.number("chase.water.channeling-damage", 4.0, 0, 40),
+                        r.bool("chase.water.sink-boats", true)));
         Impersonation impersonation = new Impersonation(
                 r.bool("impersonation.enabled", true),
                 r.bool("impersonation.show-name", true),

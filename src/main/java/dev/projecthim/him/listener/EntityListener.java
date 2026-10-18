@@ -111,7 +111,8 @@ public final class EntityListener implements Listener {
             event.setCancelled(true);
             return;
         }
-        event.setDamage(him.config().chase().weapons().arrowDamage());
+        event.setDamage(event.getDamager() instanceof org.bukkit.entity.Trident
+                ? him.config().chase().water().tridentDamage() : him.config().chase().weapons().arrowDamage());
     }
 
     @EventHandler(priority = EventPriority.HIGH)
@@ -122,6 +123,21 @@ public final class EntityListener implements Listener {
             return;
         }
         Entity hit = event.getHitEntity();
+        if (hit instanceof org.bukkit.entity.Boat boat
+                && boat.getPassengers().stream().anyMatch(e -> e.getUniqueId().equals(target))) {
+            // The boat the hunted player sits in: it breaks.
+            if (him.config().chase().water().sinkBoats()) {
+                org.bukkit.Material item = boat.getBoatMaterial();
+                org.bukkit.Location at = boat.getLocation();
+                boat.eject();
+                boat.remove();
+                if (item != null && item.isItem()) {
+                    at.getWorld().dropItemNaturally(at, new org.bukkit.inventory.ItemStack(item));
+                }
+            }
+            Bukkit.getScheduler().runTaskLater(him.plugin(), projectile::remove, 1L);
+            return;
+        }
         if (hit != null && !hit.getUniqueId().equals(target)) {
             // Passes through anyone else.
             event.setCancelled(true);

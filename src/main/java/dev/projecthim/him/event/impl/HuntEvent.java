@@ -41,6 +41,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Sound;
+import org.bukkit.World;
 import org.bukkit.SoundCategory;
 import org.bukkit.Tag;
 import org.bukkit.block.Block;
@@ -158,6 +159,19 @@ final class HuntEvent implements HorrorEvent {
         private final List<org.bukkit.entity.Mob> minions = new ArrayList<>();
         private boolean minionsSummoned;
         private net.kyori.adventure.bossbar.BossBar bossBar;
+        /** Water: trident in hand, charging a throw, a riptide dash, one channeled strike. */
+        private boolean tridentOut;
+        private long tridentChargeUntil = -1;
+        private long nextTridentAt;
+        private long riptideStart = -1;
+        private Location ripFrom;
+        private Location ripTo;
+        private long nextRiptideAt;
+        private boolean channeled;
+        private double nextHitBonus;
+        /** The damage bonus of his own weapon, already in the settings (replaced while the trident is out). */
+        private double meleeBonus;
+        private Pose shownPose = Pose.STANDING;
 
         Instance(EventContext ctx) {
             super(ctx);
@@ -229,8 +243,8 @@ final class HuntEvent implements HorrorEvent {
             };
             dress();
             Material melee = loadout.mainHand();
-            double bonus = gearCfg.weaponAffectsDamage()
-                    ? Math.min(HuntGear.damageBonus(melee), gearCfg.maxDamageBonus()) : 0;
+            double bonus = weaponBonus(melee);
+            meleeBonus = bonus;
             armorCounted = gearCfg.armorAffectsRepel() ? Math.min(loadout.armorPieces(), gearCfg.maxRepelBonus()) : 0;
             var combat = chaseCfg.combat();
             maxHealth = combat.health();
@@ -246,6 +260,16 @@ final class HuntEvent implements HorrorEvent {
             elite = loadout.tier() >= chaseCfg.elite().minTier();
             HuntGear.Loadout chosen = loadout;
             ctx.him().log().debug(() -> "hunt gear for " + p.getName() + ": " + chosen + (elite ? " (elite)" : ""));
+        }
+
+        private double weaponBonus(Material weapon) {
+            var gearCfg = ctx.him().config().chase().gear();
+            return gearCfg.weaponAffectsDamage() ? Math.min(HuntGear.damageBonus(weapon), gearCfg.maxDamageBonus()) : 0;
+        }
+
+        /** What he is holding to fight with right now. */
+        private Material heldWeapon() {
+            return tridentOut ? Material.TRIDENT : loadout.mainHand();
         }
 
         /** At the highest tiers the hunted see how much he has left. */
@@ -483,16 +507,20 @@ final class HuntEvent implements HorrorEvent {
                 reposition(p);
                 carrierLoc = carrier.location();
             }
+            updateWaterMode(p, carrierLoc);
             if (leapStart >= 0) {
                 leapTick(tick, p);
-            } else if (drawingUntil >= 0) {
-                // Drawing the bow: he stands still and aims.
+            } else if (riptideStart >= 0) {
+                riptideTick(tick, p);
+            } else if (drawingUntil >= 0 || tridentChargeUntil >= 0) {
+                // Drawing the bow or raising the trident: he stands still and aims.
                 carrier.stop();
             } else if (cmd.speed() > 0 && cmd.destination() != null) {
                 boolean swimming = carrierLoc.getBlock().getType() == org.bukkit.Material.WATER;
                 double boost = tick < speedBoostUntil ? ctx.him().config().chase().elite().speedBoost() : 1.0;
                 double drinking = drinkingUntil >= 0 ? 0.5 : 1.0;
-                carrier.setSpeed(cmd.speed() * (swimming ? waterFactor : 1.0) * boost * drinking);
+                double swim = tridentOut ? ctx.him().config().chase().water().swimFactor() : waterFactor;
+                carrier.setSpeed(cmd.speed() * (swimming ? swim : 1.0) * boost * drinking);
                 Location dest = tactics(tick, p, carrierLoc, cmd, new Location(carrierLoc.getWorld(),
                         cmd.destination().x(), cmd.destination().y(), cmd.destination().z()));
                 carrier.navigate(dest, tick, cmd.mode() == ChaseBrain.Mode.SEARCH ? 20 : 8);
@@ -548,7 +576,7 @@ final class HuntEvent implements HorrorEvent {
             double dy = follow.getY() - p.getY();
             boolean maceSmash = HuntGear.smashBonus(loadout.mainHand(), dy) > 0 && horizontal <= settings.attackRange();
             if (cmd.attackAllowed() && tick >= nextAttackAt && bodyShown && himSeesTarget && drawingUntil < 0
-                    && leapStart < 0) {
+                    && leapStart < 0 && riptideStart < 0 && tridentChargeUntil < 0) {
                 if (horizontal <= settings.attackRange() && (Math.abs(dy) < 2.0 || maceSmash)) {
                     attack(p, follow, cmd.mode(), dy);
                     nextAttackAt = tick + settings.attackCooldownTicks();
@@ -556,6 +584,196 @@ final class HuntEvent implements HorrorEvent {
             }
             ranged(tick, p, follow, cmd, distance);
             elitePlays(tick, p, follow, cmd, distance);
+            waterPlays(tick, p, follow, cmd, distance);
+            updatePose(carrier.location());
+        }
+
+        /** Rain falls on this spot (a storm, open sky above, water does not count as a roof). */
+        private static boolean rainedOn(Location l) {
+            World w = l.getWorld();
+            // OCEAN_FLOOR ignores water: a swimmer under the open sky is out in the rain.
+            return w.hasStorm() && w.getHighestBlockYAt(l, org.bukkit.HeightMap.OCEAN_FLOOR) < l.getBlockY();
+        }
+
+        private static boolean wet(Location l) {
+            return l.getBlock().getType() == Material.WATER || rainedOn(l);
+        }
+
+        /**
+         * The player took to the water, a boat or the rain: out comes the trident. Back on dry land,
+         * he takes up his own weapon again.
+         */
+        private void updateWaterMode(Player p, Location me) {
+            var water = ctx.him().config().chase().water();
+            boolean want = water.enabled() && loadout.tier() >= water.minTier() && aftermathSince < 0
+                    && (p.isInWater() || p.getVehicle() instanceof org.bukkit.entity.Boat || rainedOn(p.getLocation())
+                    && rainedOn(me));
+            if (want == tridentOut || drawingUntil >= 0 || drinkingUntil >= 0) {
+                return;
+            }
+            tridentOut = want;
+            body.entity().getEquipment().setItem(EquipmentSlot.HAND,
+                    item(want ? Material.TRIDENT : loadout.mainHand(), loadout.glint()), true);
+            ctx.him().log().debug(() -> "hunt: " + (want ? "trident out" : "trident away"));
+        }
+
+        /** Swimming in water, spinning in a riptide, standing otherwise. */
+        private void updatePose(Location me) {
+            if (deathShown) {
+                return;
+            }
+            Pose want = riptideStart >= 0 ? Pose.SPIN_ATTACK
+                    : me.getBlock().getType() == Material.WATER
+                    && me.clone().add(0, 1, 0).getBlock().getType() == Material.WATER ? Pose.SWIMMING : Pose.STANDING;
+            if (want != shownPose && Mannequin.validPoses().contains(want)) {
+                shownPose = want;
+                body.entity().setPose(want, true);
+            }
+        }
+
+        /** Thrown tridents, riptide dashes and, in a thunderstorm, lightning. */
+        private void waterPlays(long tick, Player p, Location from, ChaseBrain.Command cmd, double distance) {
+            if (!tridentOut || aftermathSince >= 0 || riptideStart >= 0) {
+                return;
+            }
+            var water = ctx.him().config().chase().water();
+            if (tridentChargeUntil >= 0) {
+                if (tick >= tridentChargeUntil) {
+                    throwTrident(tick, p);
+                }
+                return;
+            }
+            boolean pursuing = cmd.mode() == ChaseBrain.Mode.PURSUE || cmd.mode() == ChaseBrain.Mode.BURST
+                    || cmd.mode() == ChaseBrain.Mode.SIEGE;
+            if (!pursuing || !bodyShown || !himSeesTarget || drawingUntil >= 0 || leapStart >= 0) {
+                return;
+            }
+            if (water.channeling() && !channeled && loadout.tier() >= 4 && p.getWorld().isThundering()
+                    && rainedOn(p.getLocation()) && distance <= 24) {
+                channel(p);
+                return;
+            }
+            if (water.riptide() && elite && tick >= nextRiptideAt && wet(from) && distance >= 6 && distance <= 20
+                    && startRiptide(tick, p, from)) {
+                return;
+            }
+            if (tick >= nextTridentAt && distance >= 5 && distance <= 22) {
+                body.entity().startUsingItem(EquipmentSlot.HAND);
+                tridentChargeUntil = tick + 10;
+            }
+        }
+
+        private void throwTrident(long tick, Player p) {
+            tridentChargeUntil = -1;
+            nextTridentAt = tick + ctx.him().config().chase().water().tridentCooldownTicks();
+            Mannequin m = body.entity();
+            Location eye = m.getEyeLocation();
+            double speed = 2.5;
+            double d = eye.distance(p.getEyeLocation());
+            double lead = d / speed;
+            Vector aim = p.getLocation().toVector().add(new Vector(targetVelocity.x() * lead, 0.9, targetVelocity.z() * lead))
+                    .subtract(eye.toVector());
+            aim.setY(aim.getY() + HuntGear.arrowLift(d, speed));
+            m.clearActiveItem();
+            if (aim.lengthSquared() < 1.0E-4 || !himSeesTarget) {
+                return;
+            }
+            org.bukkit.entity.Trident trident = m.launchProjectile(org.bukkit.entity.Trident.class,
+                    aim.normalize().multiply(speed));
+            trident.setPersistent(false);
+            trident.setPickupStatus(AbstractArrow.PickupStatus.DISALLOWED);
+            trident.setVisibleByDefault(false);
+            ctx.him().entities().tags().markProjectile(trident, p.getUniqueId());
+            for (Player v : viewers) {
+                if (v.isOnline()) {
+                    v.showEntity(ctx.him().plugin(), trident);
+                }
+            }
+            m.swingMainHand();
+            SoundCues.play(viewers, eye, Sound.ITEM_TRIDENT_THROW, SoundCategory.HOSTILE, 1.0f, 0.9f);
+            ctx.him().log().debug(() -> "hunt: threw a trident at " + p.getName());
+        }
+
+        private static final int RIPTIDE_TICKS = 10;
+
+        /** Riptide: a straight dash through water or rain, ending at the player. Only along a clear line. */
+        private boolean startRiptide(long tick, Player p, Location from) {
+            nextRiptideAt = tick + 40;
+            Location pl = p.getLocation();
+            Vector line = pl.toVector().subtract(from.toVector());
+            double length = line.length();
+            if (length < 3) {
+                return false;
+            }
+            Location to = from.clone().add(line.clone().multiply((length - 1.2) / length));
+            for (double t = 0.1; t <= 1.0; t += 0.1) {
+                Location at = from.clone().add(to.clone().subtract(from).toVector().multiply(t));
+                if (!at.getBlock().isPassable() || !at.clone().add(0, 1, 0).getBlock().isPassable()) {
+                    return false;
+                }
+            }
+            ripFrom = from.clone();
+            ripTo = to;
+            riptideStart = tick;
+            nextRiptideAt = tick + 120;
+            SoundCues.play(viewers, from, Sound.ITEM_TRIDENT_RIPTIDE_3, SoundCategory.HOSTILE, 1.0f, 1.0f);
+            ctx.him().log().debug(() -> "hunt: riptide towards " + p.getName());
+            return true;
+        }
+
+        private void riptideTick(long tick, Player p) {
+            double t = Math.min(1, (tick - riptideStart) / (double) RIPTIDE_TICKS);
+            Location at = ripFrom.clone().add(ripTo.clone().subtract(ripFrom).toVector().multiply(t));
+            at.setYaw(MathUtil.yawTowards(at.getX(), at.getZ(), p.getX(), p.getZ()));
+            carrier.teleport(at);
+            for (Player v : viewers) {
+                if (v.isOnline() && v.getWorld() == at.getWorld()) {
+                    v.spawnParticle(Particle.BUBBLE, at.clone().add(0, 0.8, 0), 6, 0.3, 0.3, 0.3, 0.05);
+                }
+            }
+            if (t < 1) {
+                return;
+            }
+            riptideStart = -1;
+            if (at.distance(p.getLocation()) <= settings.attackRange() + 1.0) {
+                nextHitBonus = 2;
+                attack(p, at, ChaseBrain.Mode.BURST, 0);
+                nextAttackAt = tick + settings.attackCooldownTicks();
+            }
+        }
+
+        /** Netherite, a thunderstorm, the trident raised: lightning finds the player. Once per hunt. */
+        private void channel(Player p) {
+            channeled = true;
+            var water = ctx.him().config().chase().water();
+            body.entity().swingMainHand();
+            SoundCues.play(viewers, p.getLocation(), Sound.ITEM_TRIDENT_THUNDER, SoundCategory.WEATHER, 1.0f, 1.0f);
+            p.getWorld().strikeLightningEffect(p.getLocation());
+            double damage = water.channelingDamage();
+            if (!settings.lethal()) {
+                damage = Math.min(damage, Math.max(0, p.getHealth() - 1.0));
+            }
+            if (damage > 0) {
+                p.damage(damage, DamageSource.builder(DamageType.LIGHTNING_BOLT)
+                        .withCausingEntity(body.entity())
+                        .withDirectEntity(body.entity())
+                        .withDamageLocation(p.getLocation())
+                        .build());
+            }
+            ctx.him().log().debug(() -> "hunt: channeled lightning onto " + p.getName());
+        }
+
+        /** The boat breaks (and drops, as boats do); the player is in the water. */
+        private void sinkBoat(org.bukkit.entity.Boat boat) {
+            Location at = boat.getLocation();
+            Material item = boat.getBoatMaterial();
+            boat.eject();
+            boat.remove();
+            if (item != null && item.isItem()) {
+                at.getWorld().dropItemNaturally(at, new ItemStack(item));
+            }
+            SoundCues.play(viewers, at, Sound.ENTITY_PLAYER_ATTACK_CRIT, SoundCategory.HOSTILE, 1.0f, 0.6f);
+            ctx.him().log().debug(() -> "hunt: broke the boat");
         }
 
         /**
@@ -589,7 +807,7 @@ final class HuntEvent implements HorrorEvent {
                 // Never run straight at a drawn bow.
                 return dest.clone().add(side.multiply(3));
             }
-            if (HuntGear.isSpear(loadout.mainHand()) && distance < settings.attackRange() + 1.5) {
+            if (HuntGear.isSpear(heldWeapon()) && distance < settings.attackRange() + 1.5) {
                 // Keeps them at the end of the spear.
                 return pl.clone().add(away.multiply(settings.attackRange() - 0.5)).add(side.multiply(0.8));
             }
@@ -760,7 +978,7 @@ final class HuntEvent implements HorrorEvent {
                     && p.getLocation().toVector().subtract(from.toVector()).dot(
                             new Vector(targetVelocity.x(), 0, targetVelocity.z())) > 0;
             var weapons = ctx.him().config().chase().weapons();
-            if (loadout.ranged() != null && tick >= nextShotAt && distance >= 7 && distance <= 26
+            if (loadout.ranged() != null && !tridentOut && tick >= nextShotAt && distance >= 7 && distance <= 26
                     && (fleeing || cmd.mode() == ChaseBrain.Mode.SIEGE || ctx.him().random().nextDouble() < 0.01)) {
                 // Out comes the bow.
                 body.entity().getEquipment().setItem(EquipmentSlot.HAND, item(loadout.ranged(), loadout.glint()), true);
@@ -847,8 +1065,8 @@ final class HuntEvent implements HorrorEvent {
 
         private void attack(Player p, Location from, ChaseBrain.Mode mode, double heightAbove) {
             body.entity().swingMainHand();
-            Material weapon = loadout.mainHand();
-            double damage = settings.attackDamage();
+            Material weapon = heldWeapon();
+            double damage = settings.attackDamage() - meleeBonus + weaponBonus(weapon);
             double knock = 0.45;
             if (HuntGear.isAxe(weapon) && p.isBlocking()) {
                 // An axe takes the shield out of their hands for a while, as it would for anyone.
@@ -860,6 +1078,12 @@ final class HuntEvent implements HorrorEvent {
                 // A lunge.
                 damage += 1.5;
                 knock = 0.8;
+            }
+            damage += nextHitBonus;
+            nextHitBonus = 0;
+            var water = ctx.him().config().chase().water();
+            if (water.sinkBoats() && p.getVehicle() instanceof org.bukkit.entity.Boat boat) {
+                sinkBoat(boat);
             }
             double smash = HuntGear.smashBonus(weapon, heightAbove);
             if (smash > 0) {

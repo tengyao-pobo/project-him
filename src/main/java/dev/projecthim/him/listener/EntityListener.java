@@ -41,14 +41,20 @@ public final class EntityListener implements Listener {
         if (!him.entities().isOurs(e)) {
             return;
         }
-        event.setCancelled(true);
         if (event instanceof EntityDamageByEntityEvent byEntity) {
             Player attacker = attacker(byEntity.getDamager());
             HimBody body = him.entities().bodyOf(e);
-            if (attacker != null && body != null) {
-                him.events().bodyHit(body, attacker, event.getDamage());
+            if (attacker != null && body != null && body.isViewer(attacker)) {
+                double raw = event.getDamage();
+                // Not cancelled: the game plays a real hit (red flash, crit and sweep effects, the hit
+                // sounds) instead of the "no damage" of an invulnerable target. The body itself takes a
+                // token amount; HIM keeps his own health.
+                event.setDamage(0.01);
+                him.events().bodyHit(body, attacker, raw);
+                return;
             }
         }
+        event.setCancelled(true);
     }
 
     private static Player attacker(Entity damager) {
@@ -113,6 +119,20 @@ public final class EntityListener implements Listener {
         }
         event.setDamage(event.getDamager() instanceof org.bukkit.entity.Trident
                 ? him.config().chase().water().tridentDamage() : him.config().chase().weapons().arrowDamage());
+    }
+
+    /** Only someone who can see him can hit him; everything else passes through. */
+    @EventHandler(priority = EventPriority.HIGH)
+    public void onProjectileHitHim(ProjectileHitEvent event) {
+        Entity hit = event.getHitEntity();
+        if (hit == null || !him.entities().isOurs(hit)) {
+            return;
+        }
+        HimBody body = him.entities().bodyOf(hit);
+        Player shooter = event.getEntity().getShooter() instanceof Player p ? p : null;
+        if (body == null || shooter == null || !body.isViewer(shooter)) {
+            event.setCancelled(true);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGH)

@@ -205,6 +205,7 @@ final class HuntEvent implements HorrorEvent {
             }
             viewers = new ArrayList<>(ctx.mode() == EncounterMode.SHARED ? ctx.participants() : List.of(p));
             equip(memory, p);
+            body.setHittable(true);
             showBody();
             showBossBar();
             siege = new SiegeWorks(ctx.him(), ctx.him().config().chase().siege(), ctx.instanceId(), loadout.tier(),
@@ -477,6 +478,7 @@ final class HuntEvent implements HorrorEvent {
                     return;
                 }
                 dress();
+                body.setHittable(true);
             } else {
                 body.moveTo(at);
             }
@@ -1327,6 +1329,25 @@ final class HuntEvent implements HorrorEvent {
             finish(outcome);
         }
 
+        /** A hit pushes him back a little, further for a heavy or sprinting blow. Never into a wall. */
+        private void knockBack(Player attacker, double damage) {
+            if (leapStart >= 0 || riptideStart >= 0 || aftermathSince >= 0) {
+                return;
+            }
+            Location me = carrier.location();
+            Vector away = me.toVector().subtract(attacker.getLocation().toVector()).setY(0);
+            if (away.lengthSquared() < 1.0E-4) {
+                return;
+            }
+            double push = 0.5 + (attacker.isSprinting() || damage >= 8 ? 0.4 : 0);
+            Location to = me.clone().add(away.normalize().multiply(push));
+            if (to.getBlock().isPassable() && to.clone().add(0, 1, 0).getBlock().isPassable()
+                    && !to.clone().subtract(0, 0.5, 0).getBlock().isPassable()) {
+                carrier.teleport(to);
+                body.moveTo(to);
+            }
+        }
+
         /** Rarely, he leaves his head behind. */
         private void dropHead(Location at) {
             if (ctx.him().random().nextDouble() >= ctx.him().config().chase().combat().headDropChance()) {
@@ -1413,6 +1434,7 @@ final class HuntEvent implements HorrorEvent {
             if (!combat.killable()) {
                 return;
             }
+            knockBack(attacker, damage);
             double taken = HuntGear.damageTaken(damage, armorCounted, combat.armorReductionPerPiece());
             health -= taken;
             Location at = body.location();

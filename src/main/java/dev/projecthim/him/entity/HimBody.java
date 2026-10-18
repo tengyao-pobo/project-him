@@ -55,10 +55,25 @@ public final class HimBody {
             e.setSilent(true);
             e.setCollidable(false);
             e.setCanPickupItems(false);
+            // Hits are allowed through (so they look and sound like real hits) for a token amount;
+            // a deep health pool means the game itself can never kill the body.
+            var maxHealth = e.getAttribute(org.bukkit.attribute.Attribute.MAX_HEALTH);
+            if (maxHealth != null) {
+                maxHealth.setBaseValue(1024);
+                e.setHealth(1024);
+            }
             e.getEquipment().clear();
             tags.mark(e, EntityTags.Role.BODY);
         });
         return new HimBody(plugin, m);
+    }
+
+    /**
+     * Whether players' projectiles hit this body (and players bump into it). Apparitions are
+     * intangible; during a hunt he is not.
+     */
+    public void setHittable(boolean hittable) {
+        entity.setCollidable(hittable);
     }
 
     public void show(Player player) {

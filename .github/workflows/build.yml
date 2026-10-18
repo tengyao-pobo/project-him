@@ -38,5 +38,10 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" build/libs/*.jar --clobber
           else
-            gh release create "$GITHUB_REF_NAME" build/libs/*.jar --title "HIM $GITHUB_REF_NAME" --generate-notes
+            notes="docs/releases/$GITHUB_REF_NAME.md"
+            if [ -f "$notes" ]; then
+              gh release create "$GITHUB_REF_NAME" build/libs/*.jar --title "HIM $GITHUB_REF_NAME" --notes-file "$notes"
+            else
+              gh release create "$GITHUB_REF_NAME" build/libs/*.jar --title "HIM $GITHUB_REF_NAME" --generate-notes
+            fi
           fi

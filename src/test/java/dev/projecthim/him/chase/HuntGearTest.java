@@ -1,6 +1,7 @@
 package dev.projecthim.him.chase;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -59,5 +60,34 @@ class HuntGearTest {
         assertEquals(1.5, HuntGear.damageBonus(Material.DIAMOND_SWORD));
         assertTrue(HuntGear.damageBonus(Material.IRON_AXE) > HuntGear.damageBonus(Material.IRON_SWORD));
         assertEquals(0, HuntGear.damageBonus(Material.STICK));
+    }
+
+    @Test
+    void onlyPlayersWhoKeepBeatingHimMeetTheShiningNetherite() {
+        ChaseStats legend = new ChaseStats();
+        for (int i = 0; i < 7; i++) {
+            legend.recordRepelled();
+        }
+        assertEquals(4, HuntGear.tier(legend));
+        SplittableRandom r = new SplittableRandom(5);
+        int netherite = 0;
+        for (int i = 0; i < 200; i++) {
+            HuntGear.Loadout l = HuntGear.adaptive(legend, false, r, 4, true);
+            if (l.mainHand() == Material.NETHERITE_SWORD) {
+                netherite++;
+                assertTrue(l.glint());
+                assertEquals(4, l.armorPieces());
+            } else {
+                assertFalse(l.glint(), "only tier 4 shines");
+            }
+        }
+        assertTrue(netherite > 120 && netherite < 200, "netherite " + netherite);
+        // The server can cap the tiers, or keep the netherite without the shine.
+        for (int i = 0; i < 50; i++) {
+            assertTrue(HuntGear.adaptive(legend, false, r, 3, true).mainHand() != Material.NETHERITE_SWORD);
+            assertFalse(HuntGear.adaptive(legend, false, r, 4, false).glint());
+            assertSame(HuntGear.Loadout.NONE, HuntGear.adaptive(legend, false, r, 0, true));
+        }
+        assertEquals(2.0, HuntGear.damageBonus(Material.NETHERITE_SWORD));
     }
 }

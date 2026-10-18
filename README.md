@@ -38,7 +38,7 @@
 | 客戶端 | 原版 Minecraft Java Edition 26.3 |
 | 相依插件 | 無 |
 
-1. 將 `HIM-1.1.0.jar` 放入伺服器的 `plugins/` 資料夾。
+1. 將 `HIM-1.2.0.jar` 放入伺服器的 `plugins/` 資料夾。
 2. 啟動伺服器，會產生 `plugins/HIM/config.yml`。
 3. 依需要調整設定後執行 `/him reload`（設定有錯時會列出**所有**錯誤並保留原設定，不會無聲失敗）。
 4. 建議執行一次 `/him selftest`（可在主控台執行）確認伺服器端功能正常，詳見[驗證狀態](#驗證狀態請先讀)。
@@ -128,8 +128,10 @@ HIM 是一個穿著 Mojang 簽名經典白眼皮膚的 `Mannequin` 實體。它*
 - 傷害：預設 5（會被遊戲難度縮放：簡單 3.5、普通 5、困難 7.5）、冷卻 1.2 秒；`chase.lethal: false` 時最多讓玩家剩半顆心。
 
 **裝備（`chase.equipment`）**
-- `adaptive`（預設）：新玩家遇到的是赤手空拳的經典 HIM；越常逃脫或擊退他的玩家，遇到的他準備得越充分——鐵斧／石劍 → 鐵劍＋鐵胸甲 → 鑽石劍＋全套鐵甲。在地下時他會拿鎬。偶爾會「降一級」，讓裝備不完全可預測。
-- 武器會增加傷害（鐵劍 +1、鑽石劍 +1.5、斧略高），每件盔甲讓擊退他所需的次數 +1。也可設為 `none` 或 `fixed`。
+- `adaptive`（預設）：新玩家遇到的是赤手空拳的經典 HIM；越常逃脫或擊退他的玩家，遇到的他準備得越充分——鐵斧／石劍 → 鐵劍＋鐵胸甲 → 鑽石劍＋全套鐵甲 → **第 4 級：獄髓劍＋全套獄髓裝，帶附魔光澤**（只給一再擊敗他的玩家）。在地下時他會拿鎬。偶爾會「降一級」，讓裝備不完全可預測。
+- 附魔光澤只是外觀（`enchantment_glint_override`），不是真的附魔；他死不了也不會掉落，玩家拿不到這些裝備。
+- 武器會增加傷害（鐵劍 +1、鑽石劍 +1.5、獄髓劍 +2，上限 `max-damage-bonus` 預設 2），每件盔甲讓擊退他所需的次數 +1（上限 `max-repel-bonus` 預設 3）——即使全套獄髓，反擊仍然是可行的逃法。
+- 可用 `chase.equipment.max-tier` 限制最高等級、`enchant-glint: false` 關閉光澤；也可設為 `none` 或 `fixed`（`fixed.enchant-glint` 可讓固定裝備發光）。
 
 **防堵追殺漏洞**——每一種躲法都有對應，但都保留公平的解法：
 
@@ -208,6 +210,7 @@ HIM 是一個穿著 Mojang 簽名經典白眼皮膚的 `Mannequin` 實體。它*
 | 更快進入後期 | `director.stage-play-minutes` / `stage-encounters` |
 | 追殺時不破壞／搭建方塊 | `chase.siege.break-blocks: false`、`chase.siege.build-up: false` |
 | HIM 不拿武器、不穿裝備 | `chase.equipment.mode: none` |
+| 不要獄髓／發光裝備 | `chase.equipment.max-tier: 3` 或 `enchant-glint: false` |
 | 鞘翅更難／更容易逃 | `chase.flight.escape-seconds` |
 | 傳送不被跟隨／完全禁止傳送 | `chase.teleport.follows: 0`／`chase.teleport.block-commands: true` |
 | 不要偽裝成朋友 | `impersonation.enabled: false`（或給個別玩家 `him.no-impersonate`）|
@@ -257,7 +260,7 @@ plugins/HIM/data/
 
 | 狀態 | 意義 |
 |---|---|
-| ✅ 自動化測試 | JUnit 單元測試（65 項，`./gradlew test`）通過 |
+| ✅ 自動化測試 | JUnit 單元測試（66 項，`./gradlew test`）通過 |
 | ✅ 伺服器實測 | 在真實 Paper 26.3（build 205）上以 `/him selftest`（32 項）通過 |
 | ✅ 協定層實測 | 以無頭測試客戶端（mineflayer，26.1 協定經 ViaBackwards 轉譯）連入真實 Paper 26.3，記錄客戶端**實際收到的封包**驗證 |
 | ⏳ 尚待驗證 | 需要真人使用原版 26.3 客戶端觀察的項目 |
@@ -273,7 +276,7 @@ plugins/HIM/data/
 - **v1.1.0 新功能（同樣以測試客戶端在真實伺服器上驗證）**：
   - 圍困：玩家站在 4 格高的柱子上，HIM 墊了 3 塊地獄石爬上來並敲掉玩家腳下的方塊（客戶端收到裂痕動畫與方塊變化），4 筆修改進入回滾日誌，之後已還原。
   - 1×1 坑：修正前 HIM 會站在坑邊「看不到」而放棄（實測發現的漏洞）；修正後挖開坑壁、下到坑中攻擊。柵欄圍籬：破壞一個柵欄進入。梯子柱：關閉 `mobGriefing` 時改爬梯子上來，不破壞任何方塊。有燈光的密閉室內：追殺以「躲進室內」結束，沒有任何破壞。
-  - 裝備：客戶端收到 Mannequin 的主手與胸甲裝備；鐵劍時傷害由 5 變為 6。
+  - 裝備：客戶端收到 Mannequin 的主手與胸甲裝備；鐵劍時傷害由 5 變為 6。v1.2.0：全套獄髓裝每一件都帶 `enchantment_glint_override`，獄髓劍傷害為 5＋上限 2＝7。
   - 偽裝成朋友：Alice 收到帶有 Bob 的玩家檔案與 Bob 名牌的 Mannequin，複製了 Bob 手上的鑽石劍與鐵胸甲；在另一個世界的 Bob 沒有收到任何實體。破格時名牌消失、皮膚換成 HIM 的，隨後消失。
   - 鞘翅（以測試用輔助插件在伺服器端設定滑翔狀態模擬）：飛行 180 格以上的期間追殺沒有結束、他保持隱身；落地後他出現在 17 格外玩家看不到的位置並繼續追擊；飛行途中曾出現在前方約 100 格的地面上抬頭看，玩家飛過後消失。
   - 傳送：第一次跨世界傳送後他在另一個世界出現並追上；第二次傳送回原世界也跟上；第三次傳送以「傳送逃脫」結束，兩個世界都沒有殘留實體。`block-commands` 開啟時傳送被取消。
@@ -315,7 +318,7 @@ GitHub Actions（`.github/workflows/build.yml`）在每次推送與 PR 時以 JD
 
 ```bash
 ./gradlew build          # 編譯（-Xlint:all -Werror）、執行全部單元測試、產生 JAR
-# 產物：build/libs/HIM-1.1.0.jar
+# 產物：build/libs/HIM-1.2.0.jar
 ```
 
 專案結構：

@@ -175,11 +175,13 @@ final class HuntEvent implements HorrorEvent {
                 case NONE -> HuntGear.Loadout.NONE;
                 case FIXED -> fixedLoadout(gearCfg.fixed());
                 case ADAPTIVE -> HuntGear.adaptive(memory.chase(),
-                        ctx.session().context() != null && ctx.session().context().underground(), ctx.him().random());
+                        ctx.session().context() != null && ctx.session().context().underground(), ctx.him().random(),
+                        gearCfg.maxTier(), gearCfg.enchantGlint());
             };
             dress();
-            double bonus = gearCfg.weaponAffectsDamage() ? HuntGear.damageBonus(loadout.mainHand()) : 0;
-            int armor = gearCfg.armorAffectsRepel() ? loadout.armorPieces() : 0;
+            double bonus = gearCfg.weaponAffectsDamage()
+                    ? Math.min(HuntGear.damageBonus(loadout.mainHand()), gearCfg.maxDamageBonus()) : 0;
+            int armor = gearCfg.armorAffectsRepel() ? Math.min(loadout.armorPieces(), gearCfg.maxRepelBonus()) : 0;
             if (bonus > 0 || armor > 0) {
                 ChaseSettings s = settings;
                 settings = new ChaseSettings(s.walkSpeed(), s.runSpeed(), s.burstSpeed(), s.burstTicks(),
@@ -194,26 +196,35 @@ final class HuntEvent implements HorrorEvent {
 
         private void dress() {
             var eq = body.entity().getEquipment();
-            eq.setItem(EquipmentSlot.HAND, item(loadout.mainHand()), true);
-            eq.setItem(EquipmentSlot.OFF_HAND, item(loadout.offHand()), true);
-            eq.setItem(EquipmentSlot.HEAD, item(loadout.helmet()), true);
-            eq.setItem(EquipmentSlot.CHEST, item(loadout.chestplate()), true);
-            eq.setItem(EquipmentSlot.LEGS, item(loadout.leggings()), true);
-            eq.setItem(EquipmentSlot.FEET, item(loadout.boots()), true);
+            boolean glint = loadout.glint();
+            eq.setItem(EquipmentSlot.HAND, item(loadout.mainHand(), glint), true);
+            eq.setItem(EquipmentSlot.OFF_HAND, item(loadout.offHand(), glint), true);
+            eq.setItem(EquipmentSlot.HEAD, item(loadout.helmet(), glint), true);
+            eq.setItem(EquipmentSlot.CHEST, item(loadout.chestplate(), glint), true);
+            eq.setItem(EquipmentSlot.LEGS, item(loadout.leggings(), glint), true);
+            eq.setItem(EquipmentSlot.FEET, item(loadout.boots(), glint), true);
         }
 
-        private static HuntGear.Loadout fixedLoadout(java.util.Map<String, String> fixed) {
+        private HuntGear.Loadout fixedLoadout(java.util.Map<String, String> fixed) {
             return new HuntGear.Loadout(material(fixed.get("main-hand")), material(fixed.get("off-hand")),
                     material(fixed.get("helmet")), material(fixed.get("chestplate")), material(fixed.get("leggings")),
-                    material(fixed.get("boots")));
+                    material(fixed.get("boots")), ctx.him().config().chase().gear().fixedGlint());
         }
 
         private static org.bukkit.Material material(String name) {
             return name == null ? null : org.bukkit.Material.matchMaterial(name);
         }
 
-        private static ItemStack item(org.bukkit.Material m) {
-            return m == null || !m.isItem() ? null : new ItemStack(m);
+        private static ItemStack item(org.bukkit.Material m, boolean glint) {
+            if (m == null || !m.isItem()) {
+                return null;
+            }
+            ItemStack stack = new ItemStack(m);
+            if (glint) {
+                // Only the shine: no real enchantments on items nobody can ever pick up anyway.
+                stack.editMeta(meta -> meta.setEnchantmentGlintOverride(true));
+            }
+            return stack;
         }
 
         /** Manual (administrator) hunts do not change the player's hunt statistics. */

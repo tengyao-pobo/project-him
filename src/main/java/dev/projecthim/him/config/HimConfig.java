@@ -102,9 +102,15 @@ public record HimConfig(
      * Equipment HIM carries during hunts.
      *
      * @param fixed slot name (main-hand, off-hand, helmet, chestplate, leggings, boots) to material name
+     * @param maxTier         highest adaptive tier (0-4)
+     * @param enchantGlint    tier 4 shines with an enchantment glint
+     * @param fixedGlint      the fixed loadout shines with an enchantment glint
+     * @param maxDamageBonus  cap on the damage a weapon adds
+     * @param maxRepelBonus   cap on the extra hits armour adds to repel him
      */
     public record Gear(GearMode mode, Map<String, String> fixed, boolean weaponAffectsDamage,
-                       boolean armorAffectsRepel) {
+                       boolean armorAffectsRepel, int maxTier, boolean enchantGlint, boolean fixedGlint,
+                       double maxDamageBonus, int maxRepelBonus) {
     }
 
     /**
@@ -304,7 +310,12 @@ public record HimConfig(
                 r.enumValue("chase.equipment.mode", GearMode.class, GearMode.ADAPTIVE),
                 Map.copyOf(fixedGear),
                 r.bool("chase.equipment.weapon-affects-damage", true),
-                r.bool("chase.equipment.armor-affects-repel", true));
+                r.bool("chase.equipment.armor-affects-repel", true),
+                r.integer("chase.equipment.max-tier", 4, 0, 4),
+                r.bool("chase.equipment.enchant-glint", true),
+                r.bool("chase.equipment.fixed.enchant-glint", false),
+                r.number("chase.equipment.max-damage-bonus", 2.0, 0, 20),
+                r.integer("chase.equipment.max-repel-bonus", 3, 0, 20));
         Chase chase = new Chase(r.bool("chase.enabled", true), r.integer("chase.max-concurrent", 1, 0, 16), cs,
                 r.string("chase.death-message", "{player} 再也沒有回來。"), siege, gear,
                 new Flight((int) (r.number("chase.flight.escape-seconds", 30, 3, 600) * 20),

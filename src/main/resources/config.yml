@@ -168,7 +168,12 @@ chase:
     # fixed：使用下方 fixed 的設定
     # adaptive：隨玩家的反抗紀錄升級——越常擊退或逃脫他的玩家，遇到的 HIM 裝備越好；
     #           在地下時拿鎬，戶外拿斧或劍；偶爾會「降一級」，讓裝備不完全可預測。
+    #           1 鐵斧／石劍 → 2 鐵劍＋鐵胸甲 → 3 鑽石劍＋全套鐵甲 → 4 獄髓劍＋全套獄髓裝（附魔光澤）
     mode: adaptive
+    # adaptive 最高可達的等級（0-4）。
+    max-tier: 4
+    # 第 4 級帶附魔光澤（只是外觀，不是真的附魔）。
+    enchant-glint: true
     fixed:
       main-hand: IRON_SWORD
       off-hand: ""
@@ -176,10 +181,16 @@ chase:
       chestplate: ""
       leggings: ""
       boots: ""
-    # 武器是否增加傷害（例如鐵劍 +1、鑽石劍 +1.5）。
+      # fixed 裝備是否帶附魔光澤。
+      enchant-glint: false
+    # 武器是否增加傷害（例如鐵劍 +1、鑽石劍 +1.5、獄髓劍 +2）。
     weapon-affects-damage: true
+    # 武器增加的傷害上限。
+    max-damage-bonus: 2.0
     # 每件盔甲讓擊退他所需的次數 +1。
     armor-affects-repel: true
+    # 盔甲增加的擊退次數上限（保留「反擊」這條逃脫路線）。
+    max-repel-bonus: 3
 
 # ----------------------------------------------------------------------------
 # 世界干擾
